@@ -6,5 +6,12 @@ description = "Generate Zod schema source code from JSON Schema"
 license = "MIT"
 repository = "https://github.com/hey-jj/json-schema-to-zod"
 readme = "README.md"
+keywords = ["json-schema", "zod", "codegen", "typescript"]
+categories = ["development-tools", "parsing"]
 
 [dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[[bin]]
+name = "json-schema-to-zod"
+path = "src/bin/cli.rs"
