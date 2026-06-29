@@ -6,6 +6,8 @@
 
 use serde_json::Value;
 
+use crate::util::truthy;
+
 /// True when `type === "object"`.
 pub fn is_object(x: &Value) -> bool {
     x.get("type").and_then(|t| t.as_str()) == Some("object")
@@ -63,13 +65,12 @@ pub fn is_primitive(x: &Value, p: &str) -> bool {
 
 /// True when `if`, `then`, and `else` are all present and truthy.
 pub fn is_conditional(x: &Value) -> bool {
-    let has = |k: &str| x.get(k).is_some();
-    has("if")
-        && truthy(x.get("if"))
-        && has("then")
-        && has("else")
-        && truthy(x.get("then"))
-        && truthy(x.get("else"))
+    let present_and_truthy = |k: &str| x.get(k).is_some_and(truthy);
+    present_and_truthy("if")
+        && x.get("then").is_some()
+        && x.get("else").is_some()
+        && present_and_truthy("then")
+        && present_and_truthy("else")
 }
 
 /// Recognize a discriminated union the library can lower to
@@ -128,18 +129,4 @@ pub fn is_simple_discriminated_one_of(x: &Value) -> bool {
             Some(Value::Array(req)) if req.iter().any(|r| r.as_str() == Some(prop_name))
         )
     })
-}
-
-/// JS truthiness for an optional JSON value as used by the conditional guard.
-/// `undefined`, `null`, `false`, `0`, `""`, and `NaN` are falsy. Empty objects
-/// and arrays are truthy.
-fn truthy(v: Option<&Value>) -> bool {
-    match v {
-        None => false,
-        Some(Value::Null) => false,
-        Some(Value::Bool(b)) => *b,
-        Some(Value::Number(n)) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
-        Some(Value::String(s)) => !s.is_empty(),
-        Some(Value::Array(_)) | Some(Value::Object(_)) => true,
-    }
 }

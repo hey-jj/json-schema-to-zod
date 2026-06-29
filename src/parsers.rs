@@ -6,7 +6,7 @@ use crate::jsdocs::add_jsdocs;
 use crate::parse_schema::parse_schema;
 use crate::predicates as its;
 use crate::types::{PathSegment, Refs, ZodVersion};
-use crate::util::{half, json_stringify, json_stringify_str, with_message, Builder};
+use crate::util::{compact_json, half, json_string_literal, truthy, with_message, MessageSlot};
 
 fn key(s: &str) -> PathSegment {
     PathSegment::Key(s.to_string())
@@ -34,7 +34,7 @@ pub fn parse_default() -> String {
 /// `z.literal(<json>)` from the `const` value.
 pub fn parse_const(schema: &Value) -> String {
     let c = schema.get("const").unwrap_or(&Value::Null);
-    format!("z.literal({})", json_stringify(c))
+    format!("z.literal({})", compact_json(c))
 }
 
 /// Lower an `enum` to a literal, a string enum, or a union of literals.
@@ -51,21 +51,21 @@ pub fn parse_enum(schema: &Value) -> String {
         return "z.never()".to_string();
     }
     if values.len() == 1 {
-        return format!("z.literal({})", json_stringify(&values[0]));
+        return format!("z.literal({})", compact_json(&values[0]));
     }
     if values.iter().all(|x| x.is_string()) {
         // The string branch joins with a comma and no space. This matches the
         // bare array-to-string coercion the contract locks in.
         let joined = values
             .iter()
-            .map(json_stringify)
+            .map(compact_json)
             .collect::<Vec<_>>()
             .join(",");
         return format!("z.enum([{joined}])");
     }
     let joined = values
         .iter()
-        .map(|x| format!("z.literal({})", json_stringify(x)))
+        .map(|x| format!("z.literal({})", compact_json(x)))
         .collect::<Vec<_>>()
         .join(", ");
     format!("z.union([{joined}])")
@@ -82,29 +82,53 @@ pub fn parse_string(schema: &Value) -> String {
         |value, _json| {
             let v = value.as_str()?;
             match v {
-                "email" => Some(Builder::Two(".email(".into(), ")".into())),
-                "ip" => Some(Builder::Two(".ip(".into(), ")".into())),
-                "ipv4" => Some(Builder::Three(
-                    ".ip({ version: \"v4\"".into(),
-                    ", message: ".into(),
-                    " })".into(),
-                )),
-                "ipv6" => Some(Builder::Three(
-                    ".ip({ version: \"v6\"".into(),
-                    ", message: ".into(),
-                    " })".into(),
-                )),
-                "uri" => Some(Builder::Two(".url(".into(), ")".into())),
-                "uuid" => Some(Builder::Two(".uuid(".into(), ")".into())),
-                "date-time" => Some(Builder::Three(
-                    ".datetime({ offset: true".into(),
-                    ", message: ".into(),
-                    " })".into(),
-                )),
-                "time" => Some(Builder::Two(".time(".into(), ")".into())),
-                "date" => Some(Builder::Two(".date(".into(), ")".into())),
-                "binary" => Some(Builder::Two(".base64(".into(), ")".into())),
-                "duration" => Some(Builder::Two(".duration(".into(), ")".into())),
+                "email" => Some(MessageSlot::NoMessage {
+                    open: ".email(".into(),
+                    close: ")".into(),
+                }),
+                "ip" => Some(MessageSlot::NoMessage {
+                    open: ".ip(".into(),
+                    close: ")".into(),
+                }),
+                "ipv4" => Some(MessageSlot::WithMessage {
+                    open: ".ip({ version: \"v4\"".into(),
+                    prefix: ", message: ".into(),
+                    close: " })".into(),
+                }),
+                "ipv6" => Some(MessageSlot::WithMessage {
+                    open: ".ip({ version: \"v6\"".into(),
+                    prefix: ", message: ".into(),
+                    close: " })".into(),
+                }),
+                "uri" => Some(MessageSlot::NoMessage {
+                    open: ".url(".into(),
+                    close: ")".into(),
+                }),
+                "uuid" => Some(MessageSlot::NoMessage {
+                    open: ".uuid(".into(),
+                    close: ")".into(),
+                }),
+                "date-time" => Some(MessageSlot::WithMessage {
+                    open: ".datetime({ offset: true".into(),
+                    prefix: ", message: ".into(),
+                    close: " })".into(),
+                }),
+                "time" => Some(MessageSlot::NoMessage {
+                    open: ".time(".into(),
+                    close: ")".into(),
+                }),
+                "date" => Some(MessageSlot::NoMessage {
+                    open: ".date(".into(),
+                    close: ")".into(),
+                }),
+                "binary" => Some(MessageSlot::NoMessage {
+                    open: ".base64(".into(),
+                    close: ")".into(),
+                }),
+                "duration" => Some(MessageSlot::NoMessage {
+                    open: ".duration(".into(),
+                    close: ")".into(),
+                }),
                 _ => None,
             }
         },
@@ -115,11 +139,11 @@ pub fn parse_string(schema: &Value) -> String {
         schema,
         "pattern",
         |_value, json| {
-            Some(Builder::Three(
-                format!(".regex(new RegExp({json})"),
-                ", ".into(),
-                ")".into(),
-            ))
+            Some(MessageSlot::WithMessage {
+                open: format!(".regex(new RegExp({json})"),
+                prefix: ", ".into(),
+                close: ")".into(),
+            })
         },
         None,
     ));
@@ -128,11 +152,11 @@ pub fn parse_string(schema: &Value) -> String {
         schema,
         "minLength",
         |_value, json| {
-            Some(Builder::Three(
-                format!(".min({json}"),
-                ", ".into(),
-                ")".into(),
-            ))
+            Some(MessageSlot::WithMessage {
+                open: format!(".min({json}"),
+                prefix: ", ".into(),
+                close: ")".into(),
+            })
         },
         None,
     ));
@@ -141,11 +165,11 @@ pub fn parse_string(schema: &Value) -> String {
         schema,
         "maxLength",
         |_value, json| {
-            Some(Builder::Three(
-                format!(".max({json}"),
-                ", ".into(),
-                ")".into(),
-            ))
+            Some(MessageSlot::WithMessage {
+                open: format!(".max({json}"),
+                prefix: ", ".into(),
+                close: ")".into(),
+            })
         },
         None,
     ));
@@ -155,7 +179,10 @@ pub fn parse_string(schema: &Value) -> String {
         "contentEncoding",
         |value, _json| {
             if value.as_str() == Some("base64") {
-                Some(Builder::Two(".base64(".into(), ")".into()))
+                Some(MessageSlot::NoMessage {
+                    open: ".base64(".into(),
+                    close: ")".into(),
+                })
             } else {
                 None
             }
@@ -168,11 +195,7 @@ pub fn parse_string(schema: &Value) -> String {
         "contentMediaType",
         |value, _json| {
             if value.as_str() == Some("application/json") {
-                Some(Builder::Three(
-                    ".transform((str, ctx) => { try { return JSON.parse(str); } catch (err) { ctx.addIssue({ code: \"custom\", message: \"Invalid JSON\" }); }}".into(),
-                    ", ".into(),
-                    ")".into(),
-                ))
+                Some(MessageSlot::WithMessage { open: ".transform((str, ctx) => { try { return JSON.parse(str); } catch (err) { ctx.addIssue({ code: \"custom\", message: \"Invalid JSON\" }); }}".into(), prefix: ", ".into(), close: ")".into() })
             } else {
                 None
             }
@@ -186,14 +209,16 @@ pub fn parse_string(schema: &Value) -> String {
             schema,
             "contentSchema",
             |value, _json| {
-                if value.is_object() {
+                // JS guards with `value instanceof Object`, which is true for
+                // arrays as well as plain objects. Match both.
+                if value.is_object() || value.is_array() {
                     // Parsed with fresh refs, independent of the parent walk.
                     let inner = parse_schema(value, &Refs::default_v4(), false);
-                    Some(Builder::Three(
-                        format!(".pipe({inner}"),
-                        ", ".into(),
-                        ")".into(),
-                    ))
+                    Some(MessageSlot::WithMessage {
+                        open: format!(".pipe({inner}"),
+                        prefix: ", ".into(),
+                        close: ")".into(),
+                    })
                 } else {
                     None
                 }
@@ -213,7 +238,12 @@ pub fn parse_number(schema: &Value) -> String {
         r.push_str(&with_message(
             schema,
             "type",
-            |_v, _j| Some(Builder::Two(".int(".into(), ")".into())),
+            |_v, _j| {
+                Some(MessageSlot::NoMessage {
+                    open: ".int(".into(),
+                    close: ")".into(),
+                })
+            },
             None,
         ));
     } else {
@@ -222,7 +252,10 @@ pub fn parse_number(schema: &Value) -> String {
             "format",
             |value, _json| {
                 if value.as_str() == Some("int64") {
-                    Some(Builder::Two(".int(".into(), ")".into()))
+                    Some(MessageSlot::NoMessage {
+                        open: ".int(".into(),
+                        close: ")".into(),
+                    })
                 } else {
                     None
                 }
@@ -240,13 +273,16 @@ pub fn parse_number(schema: &Value) -> String {
                 if starts_int {
                     return None;
                 }
-                return Some(Builder::Two(".int(".into(), ")".into()));
+                return Some(MessageSlot::NoMessage {
+                    open: ".int(".into(),
+                    close: ")".into(),
+                });
             }
-            Some(Builder::Three(
-                format!(".multipleOf({json}"),
-                ", ".into(),
-                ")".into(),
-            ))
+            Some(MessageSlot::WithMessage {
+                open: format!(".multipleOf({json}"),
+                prefix: ", ".into(),
+                close: ")".into(),
+            })
         },
         None,
     ));
@@ -267,11 +303,11 @@ pub fn parse_number(schema: &Value) -> String {
                 schema,
                 "minimum",
                 |_v, json| {
-                    Some(Builder::Three(
-                        format!(".gt({json}"),
-                        ", ".into(),
-                        ")".into(),
-                    ))
+                    Some(MessageSlot::WithMessage {
+                        open: format!(".gt({json}"),
+                        prefix: ", ".into(),
+                        close: ")".into(),
+                    })
                 },
                 None,
             ));
@@ -280,11 +316,11 @@ pub fn parse_number(schema: &Value) -> String {
                 schema,
                 "minimum",
                 |_v, json| {
-                    Some(Builder::Three(
-                        format!(".gte({json}"),
-                        ", ".into(),
-                        ")".into(),
-                    ))
+                    Some(MessageSlot::WithMessage {
+                        open: format!(".gte({json}"),
+                        prefix: ", ".into(),
+                        close: ")".into(),
+                    })
                 },
                 None,
             ));
@@ -294,11 +330,11 @@ pub fn parse_number(schema: &Value) -> String {
             schema,
             "exclusiveMinimum",
             |_v, json| {
-                Some(Builder::Three(
-                    format!(".gt({json}"),
-                    ", ".into(),
-                    ")".into(),
-                ))
+                Some(MessageSlot::WithMessage {
+                    open: format!(".gt({json}"),
+                    prefix: ", ".into(),
+                    close: ")".into(),
+                })
             },
             None,
         ));
@@ -320,11 +356,11 @@ pub fn parse_number(schema: &Value) -> String {
                 schema,
                 "maximum",
                 |_v, json| {
-                    Some(Builder::Three(
-                        format!(".lt({json}"),
-                        ", ".into(),
-                        ")".into(),
-                    ))
+                    Some(MessageSlot::WithMessage {
+                        open: format!(".lt({json}"),
+                        prefix: ", ".into(),
+                        close: ")".into(),
+                    })
                 },
                 None,
             ));
@@ -333,11 +369,11 @@ pub fn parse_number(schema: &Value) -> String {
                 schema,
                 "maximum",
                 |_v, json| {
-                    Some(Builder::Three(
-                        format!(".lte({json}"),
-                        ", ".into(),
-                        ")".into(),
-                    ))
+                    Some(MessageSlot::WithMessage {
+                        open: format!(".lte({json}"),
+                        prefix: ", ".into(),
+                        close: ")".into(),
+                    })
                 },
                 None,
             ));
@@ -347,11 +383,11 @@ pub fn parse_number(schema: &Value) -> String {
             schema,
             "exclusiveMaximum",
             |_v, json| {
-                Some(Builder::Three(
-                    format!(".lt({json}"),
-                    ", ".into(),
-                    ")".into(),
-                ))
+                Some(MessageSlot::WithMessage {
+                    open: format!(".lt({json}"),
+                    prefix: ", ".into(),
+                    close: ")".into(),
+                })
             },
             None,
         ));
@@ -391,11 +427,11 @@ pub fn parse_array(schema: &Value, refs: &Refs) -> String {
         schema,
         "minItems",
         |_v, json| {
-            Some(Builder::Three(
-                format!(".min({json}"),
-                ", ".into(),
-                ")".into(),
-            ))
+            Some(MessageSlot::WithMessage {
+                open: format!(".min({json}"),
+                prefix: ", ".into(),
+                close: ")".into(),
+            })
         },
         None,
     ));
@@ -404,11 +440,11 @@ pub fn parse_array(schema: &Value, refs: &Refs) -> String {
         schema,
         "maxItems",
         |_v, json| {
-            Some(Builder::Three(
-                format!(".max({json}"),
-                ", ".into(),
-                ")".into(),
-            ))
+            Some(MessageSlot::WithMessage {
+                open: format!(".max({json}"),
+                prefix: ", ".into(),
+                close: ")".into(),
+            })
         },
         None,
     ));
@@ -418,11 +454,11 @@ pub fn parse_array(schema: &Value, refs: &Refs) -> String {
             schema,
             "uniqueItems",
             |_v, _json| {
-                Some(Builder::Three(
-                    ".refine((arr) => arr.every((item, i) => arr.indexOf(item) == i)".into(),
-                    ", ".into(),
-                    ")".into(),
-                ))
+                Some(MessageSlot::WithMessage {
+                    open: ".refine((arr) => arr.every((item, i) => arr.indexOf(item) == i)".into(),
+                    prefix: ", ".into(),
+                    close: ")".into(),
+                })
             },
             Some("All items must be unique!"),
         ));
@@ -435,7 +471,7 @@ pub fn parse_array(schema: &Value, refs: &Refs) -> String {
 /// metadata blocked. The outer frame applies metadata to the wrapper.
 pub fn parse_nullable(schema: &Value, refs: &Refs) -> String {
     let inner = refs.intern(crate::util::omit(schema, "nullable"));
-    format!("{}.nullable()", parse_schema(inner, refs, true))
+    format!("{}.nullable()", parse_schema(&inner, refs, true))
 }
 
 /// `z.any().refine(...)` that rejects anything matching the `not` schema.
@@ -452,11 +488,12 @@ pub fn parse_not(schema: &Value, refs: &Refs) -> String {
 /// `z.union([...])` over each entry in a multi-valued `type`. Per-branch
 /// defaults are dropped so the union carries the default once.
 pub fn parse_multiple_type(schema: &Value, refs: &Refs) -> String {
-    let types = schema.get("type").and_then(|t| t.as_array());
-    let types = match types {
-        Some(t) => t,
-        None => return "z.union([])".to_string(),
-    };
+    // The dispatcher only routes here when `type` is an array, so this never
+    // fails. An empty array maps zero branches and emits `z.union([])`.
+    let types = schema
+        .get("type")
+        .and_then(|t| t.as_array())
+        .expect("dispatcher guarantees an array type");
 
     let parts = types
         .iter()
@@ -467,7 +504,7 @@ pub fn parse_multiple_type(schema: &Value, refs: &Refs) -> String {
             }
             let interned = refs.intern(obj);
             let child = refs.with_path_without_defaults(refs.path.clone());
-            parse_schema(interned, &child, false)
+            parse_schema(&interned, &child, false)
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -561,7 +598,7 @@ pub fn parse_all_of(schema: &Value, refs: &Refs) -> String {
         // An untagged item keeps its tree identity; a tagged one is rebuilt.
         if item.get(ORIGINAL_INDEX).is_some() {
             let cleaned = refs.intern(strip_original_index(item));
-            return parse_schema(cleaned, &child, false);
+            return parse_schema(&cleaned, &child, false);
         }
         return parse_schema(item, &child, false);
     }
@@ -572,8 +609,8 @@ pub fn parse_all_of(schema: &Value, refs: &Refs) -> String {
     let right_schema = refs.intern(json!({ "allOf": right }));
     format!(
         "z.intersection({}, {})",
-        parse_all_of(left_schema, refs),
-        parse_all_of(right_schema, refs)
+        parse_all_of(&left_schema, refs),
+        parse_all_of(&right_schema, refs)
     )
 }
 
@@ -788,7 +825,7 @@ pub fn parse_object(schema: &Value, refs: &Refs) -> String {
                     let child = refs.with_path(refs.push_path(&[key("properties"), key(prop_key)]));
                     let mut result = format!(
                         "{}: {}",
-                        json_stringify_str(prop_key),
+                        json_string_literal(prop_key),
                         parse_schema(prop_schema, &child, false)
                     );
 
@@ -837,15 +874,15 @@ pub fn parse_object(schema: &Value, refs: &Refs) -> String {
 
     if its::has_any_of(schema) {
         let mapped = refs.intern(map_combinator(schema, "anyOf"));
-        output.push_str(&format!(".and({})", parse_any_of(mapped, refs)));
+        output.push_str(&format!(".and({})", parse_any_of(&mapped, refs)));
     }
     if its::has_one_of(schema) {
         let mapped = refs.intern(map_combinator(schema, "oneOf"));
-        output.push_str(&format!(".and({})", parse_one_of(mapped, refs)));
+        output.push_str(&format!(".and({})", parse_one_of(&mapped, refs)));
     }
     if its::has_all_of(schema) {
         let mapped = refs.intern(map_combinator(schema, "allOf"));
-        output.push_str(&format!(".and({})", parse_all_of(mapped, refs)));
+        output.push_str(&format!(".and({})", parse_all_of(&mapped, refs)));
     }
 
     output
@@ -950,7 +987,7 @@ fn build_pattern_properties(
         if let Some(prop_obj) = schema.get("properties").and_then(|p| p.as_object()) {
             let keys = prop_obj
                 .keys()
-                .map(|k| json_stringify_str(k))
+                .map(|k| json_string_literal(k))
                 .collect::<Vec<_>>()
                 .join(", ");
             pp.push_str(&format!("let evaluated = [{keys}].includes(key)\n"));
@@ -963,7 +1000,7 @@ fn build_pattern_properties(
     for (pkey, parsed_value) in &parsed {
         pp.push_str(&format!(
             "if (key.match(new RegExp({}))) {{\n",
-            json_stringify_str(pkey)
+            json_string_literal(pkey)
         ));
         if has_additional {
             pp.push_str("evaluated = true\n");
@@ -1011,13 +1048,1689 @@ fn build_pattern_properties(
     Some(pp)
 }
 
-/// JS truthiness for a JSON value.
-fn truthy(v: &Value) -> bool {
-    match v {
-        Value::Null => false,
-        Value::Bool(b) => *b,
-        Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
-        Value::String(s) => !s.is_empty(),
-        Value::Array(_) | Value::Object(_) => true,
+#[cfg(test)]
+mod tests {
+    use serde_json::{json, Value};
+
+    use super::*;
+    use crate::predicates::is_simple_discriminated_one_of;
+    use crate::types::{Refs, ZodVersion};
+
+    fn refs_v4() -> Refs {
+        Refs::default_v4()
+    }
+
+    fn refs_v3() -> Refs {
+        let mut r = Refs::default_v4();
+        r.zod_version = ZodVersion::V3;
+        r
+    }
+
+    mod parse_const {
+        #[allow(unused_imports)]
+        use super::*;
+
+        #[test]
+        fn falsy_constant() {
+            assert_eq!(parse_const(&json!({ "const": false })), "z.literal(false)");
+        }
+
+        #[test]
+        fn empty_string_constant() {
+            assert_eq!(parse_const(&json!({ "const": "" })), r#"z.literal("")"#);
+        }
+    }
+
+    mod parse_enum {
+        #[allow(unused_imports)]
+        use super::*;
+
+        #[test]
+        fn empty_enum_is_never() {
+            assert_eq!(parse_enum(&json!({ "enum": [] })), "z.never()");
+        }
+
+        #[test]
+        fn single_item_enum_is_literal() {
+            assert_eq!(
+                parse_enum(&json!({ "enum": ["someValue"] })),
+                r#"z.literal("someValue")"#
+            );
+        }
+
+        #[test]
+        fn all_string_enum_is_enum_array() {
+            assert_eq!(
+                parse_enum(&json!({ "enum": ["someValue", "anotherValue"] })),
+                r#"z.enum(["someValue","anotherValue"])"#
+            );
+        }
+
+        #[test]
+        fn mixed_enum_is_union() {
+            assert_eq!(
+                parse_enum(&json!({ "enum": ["someValue", 57] })),
+                r#"z.union([z.literal("someValue"), z.literal(57)])"#
+            );
+        }
+    }
+
+    mod parse_number {
+        #[allow(unused_imports)]
+        use super::*;
+
+        #[test]
+        fn integer() {
+            assert_eq!(
+                parse_number(&json!({ "type": "integer" })),
+                "z.number().int()"
+            );
+            assert_eq!(
+                parse_number(&json!({ "type": "integer", "multipleOf": 1 })),
+                "z.number().int()"
+            );
+            assert_eq!(
+                parse_number(&json!({ "type": "number", "multipleOf": 1 })),
+                "z.number().int()"
+            );
+        }
+
+        #[test]
+        fn minimum_with_exclusive_minimum_true() {
+            assert_eq!(
+                parse_number(&json!({ "type": "number", "exclusiveMinimum": true, "minimum": 2 })),
+                "z.number().gt(2)"
+            );
+        }
+
+        #[test]
+        fn plain_minimum() {
+            assert_eq!(
+                parse_number(&json!({ "type": "number", "minimum": 2 })),
+                "z.number().gte(2)"
+            );
+        }
+
+        #[test]
+        fn maximum_with_exclusive_maximum_true() {
+            assert_eq!(
+                parse_number(&json!({ "type": "number", "exclusiveMaximum": true, "maximum": 2 })),
+                "z.number().lt(2)"
+            );
+        }
+
+        #[test]
+        fn numeric_exclusive_maximum() {
+            assert_eq!(
+                parse_number(&json!({ "type": "number", "exclusiveMaximum": 2 })),
+                "z.number().lt(2)"
+            );
+        }
+
+        #[test]
+        fn error_messages_per_key() {
+            assert_eq!(
+                parse_number(&json!({
+                    "type": "number",
+                    "format": "int64",
+                    "exclusiveMinimum": 0,
+                    "maximum": 2,
+                    "multipleOf": 2,
+                    "errorMessage": {
+                        "format": "ayy",
+                        "multipleOf": "lmao",
+                        "exclusiveMinimum": "deez",
+                        "maximum": "nuts"
+                    }
+                })),
+                r#"z.number().int("ayy").multipleOf(2, "lmao").gt(0, "deez").lte(2, "nuts")"#
+            );
+        }
+    }
+
+    mod parse_string {
+        #[allow(unused_imports)]
+        use super::*;
+
+        #[test]
+        fn date_time_with_message() {
+            assert_eq!(
+                parse_string(&json!({
+                    "type": "string",
+                    "format": "date-time",
+                    "errorMessage": { "format": "hello" }
+                })),
+                r#"z.string().datetime({ offset: true, message: "hello" })"#
+            );
+        }
+
+        #[test]
+        fn email() {
+            assert_eq!(
+                parse_string(&json!({ "type": "string", "format": "email" })),
+                "z.string().email()"
+            );
+        }
+
+        #[test]
+        fn ip_and_ipv6() {
+            assert_eq!(
+                parse_string(&json!({ "type": "string", "format": "ip" })),
+                "z.string().ip()"
+            );
+            assert_eq!(
+                parse_string(&json!({ "type": "string", "format": "ipv6" })),
+                r#"z.string().ip({ version: "v6" })"#
+            );
+        }
+
+        #[test]
+        fn uri() {
+            assert_eq!(
+                parse_string(&json!({ "type": "string", "format": "uri" })),
+                "z.string().url()"
+            );
+        }
+
+        #[test]
+        fn uuid() {
+            assert_eq!(
+                parse_string(&json!({ "type": "string", "format": "uuid" })),
+                "z.string().uuid()"
+            );
+        }
+
+        #[test]
+        fn time() {
+            assert_eq!(
+                parse_string(&json!({ "type": "string", "format": "time" })),
+                "z.string().time()"
+            );
+        }
+
+        #[test]
+        fn date() {
+            assert_eq!(
+                parse_string(&json!({ "type": "string", "format": "date" })),
+                "z.string().date()"
+            );
+        }
+
+        #[test]
+        fn duration() {
+            assert_eq!(
+                parse_string(&json!({ "type": "string", "format": "duration" })),
+                "z.string().duration()"
+            );
+        }
+
+        #[test]
+        fn base64_variants() {
+            assert_eq!(
+                parse_string(&json!({ "type": "string", "contentEncoding": "base64" })),
+                "z.string().base64()"
+            );
+            assert_eq!(
+                parse_string(&json!({
+                    "type": "string",
+                    "contentEncoding": "base64",
+                    "errorMessage": { "contentEncoding": "x" }
+                })),
+                r#"z.string().base64("x")"#
+            );
+            assert_eq!(
+                parse_string(&json!({ "type": "string", "format": "binary" })),
+                "z.string().base64()"
+            );
+            assert_eq!(
+                parse_string(&json!({
+                    "type": "string",
+                    "format": "binary",
+                    "errorMessage": { "format": "x" }
+                })),
+                r#"z.string().base64("x")"#
+            );
+        }
+
+        #[test]
+        fn stringified_json() {
+            let schema = json!({
+                "type": "string",
+                "contentMediaType": "application/json",
+                "contentSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "age": { "type": "integer" }
+                    },
+                    "required": ["name", "age"]
+                }
+            });
+            assert_eq!(
+                parse_string(&schema),
+                r#"z.string().transform((str, ctx) => { try { return JSON.parse(str); } catch (err) { ctx.addIssue({ code: "custom", message: "Invalid JSON" }); }}).pipe(z.object({ "name": z.string(), "age": z.number().int() }))"#
+            );
+        }
+
+        #[test]
+        fn stringified_json_with_messages() {
+            let schema = json!({
+                "type": "string",
+                "contentMediaType": "application/json",
+                "contentSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "age": { "type": "integer" }
+                    },
+                    "required": ["name", "age"]
+                },
+                "errorMessage": { "contentMediaType": "x", "contentSchema": "y" }
+            });
+            assert_eq!(
+                parse_string(&schema),
+                r#"z.string().transform((str, ctx) => { try { return JSON.parse(str); } catch (err) { ctx.addIssue({ code: "custom", message: "Invalid JSON" }); }}, "x").pipe(z.object({ "name": z.string(), "age": z.number().int() }), "y")"#
+            );
+        }
+
+        #[test]
+        fn combined_format_pattern_lengths_with_messages() {
+            assert_eq!(
+                parse_string(&json!({
+                    "type": "string",
+                    "format": "ipv4",
+                    "pattern": "x",
+                    "minLength": 1,
+                    "maxLength": 2,
+                    "errorMessage": {
+                        "format": "ayy",
+                        "pattern": "lmao",
+                        "minLength": "deez",
+                        "maxLength": "nuts"
+                    }
+                })),
+                r#"z.string().ip({ version: "v4", message: "ayy" }).regex(new RegExp("x"), "lmao").min(1, "deez").max(2, "nuts")"#
+            );
+        }
+
+        #[test]
+        fn array_content_schema_still_pipes() {
+            // `value instanceof Object` is true for arrays, so an array
+            // contentSchema keeps the `.pipe(...)`. An empty array parses to
+            // `z.any()` through the boolean branch.
+            assert_eq!(
+                parse_string(&json!({
+                    "type": "string",
+                    "contentMediaType": "application/json",
+                    "contentSchema": []
+                })),
+                r#"z.string().transform((str, ctx) => { try { return JSON.parse(str); } catch (err) { ctx.addIssue({ code: "custom", message: "Invalid JSON" }); }}).pipe(z.any())"#
+            );
+        }
+    }
+
+    mod parse_array {
+        #[allow(unused_imports)]
+        use super::*;
+
+        #[test]
+        fn tuple_from_items_array() {
+            assert_eq!(
+                parse_array(
+                    &json!({ "type": "array", "items": [{ "type": "string" }, { "type": "number" }] }),
+                    &refs_v4()
+                ),
+                "z.tuple([z.string(),z.number()])"
+            );
+        }
+
+        #[test]
+        fn array_from_items_object() {
+            assert_eq!(
+                parse_array(
+                    &json!({ "type": "array", "items": { "type": "string" } }),
+                    &refs_v4()
+                ),
+                "z.array(z.string())"
+            );
+        }
+
+        #[test]
+        fn max_items() {
+            assert_eq!(
+                parse_array(
+                    &json!({ "type": "array", "maxItems": 2, "items": { "type": "string" } }),
+                    &refs_v4()
+                ),
+                "z.array(z.string()).max(2)"
+            );
+        }
+
+        #[test]
+        fn unique_items() {
+            assert_eq!(
+                parse_array(
+                    &json!({ "type": "array", "uniqueItems": true, "items": { "type": "string" } }),
+                    &refs_v4()
+                ),
+                r#"z.array(z.string()).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!")"#
+            );
+        }
+
+        #[test]
+        fn min_items() {
+            assert_eq!(
+                parse_array(
+                    &json!({ "type": "array", "items": { "type": "string" }, "minItems": 3 }),
+                    &refs_v4()
+                ),
+                "z.array(z.string()).min(3)"
+            );
+        }
+
+        #[test]
+        fn tuple_ignores_min_max_unique() {
+            // A tuple takes the early return, so min, max, and unique never
+            // attach.
+            assert_eq!(
+                parse_array(
+                    &json!({
+                        "type": "array",
+                        "items": [{ "type": "string" }],
+                        "minItems": 1,
+                        "maxItems": 2,
+                        "uniqueItems": true
+                    }),
+                    &refs_v4()
+                ),
+                "z.tuple([z.string()])"
+            );
+        }
+    }
+
+    mod parse_all_of {
+        #[allow(unused_imports)]
+        use super::*;
+
+        #[test]
+        fn empty_is_never() {
+            assert_eq!(
+                parse_all_of(&json!({ "allOf": [] }), &refs_v4()),
+                "z.never()"
+            );
+        }
+
+        #[test]
+        fn boolean_true_member() {
+            assert_eq!(
+                parse_all_of(
+                    &json!({ "allOf": [{ "type": "string" }, true] }),
+                    &refs_v4()
+                ),
+                "z.intersection(z.string(), z.any())"
+            );
+        }
+
+        #[test]
+        fn boolean_false_member() {
+            assert_eq!(
+                parse_all_of(
+                    &json!({ "allOf": [{ "type": "string" }, false] }),
+                    &refs_v4()
+                ),
+                r#"z.intersection(z.string(), z.any().refine((value) => !z.any().safeParse(value).success, "Invalid input: Should NOT be valid against schema"))"#
+            );
+        }
+
+        #[test]
+        fn three_members_split_right_leaning() {
+            // half([boolean, number, string]) -> left [boolean], right [number, string].
+            assert_eq!(
+                parse_all_of(
+                    &json!({ "allOf": [{ "type": "boolean" }, { "type": "number" }, { "type": "string" }] }),
+                    &refs_v4()
+                ),
+                "z.intersection(z.boolean(), z.intersection(z.number(), z.string()))"
+            );
+        }
+
+        #[test]
+        fn four_members_split_evenly() {
+            // half([string, number, boolean, null]) -> [string, number] and
+            // [boolean, null], so each side nests one more intersection.
+            assert_eq!(
+                parse_all_of(
+                    &json!({ "allOf": [
+                        { "type": "string" },
+                        { "type": "number" },
+                        { "type": "boolean" },
+                        { "type": "null" }
+                    ] }),
+                    &refs_v4()
+                ),
+                "z.intersection(z.intersection(z.string(), z.number()), z.intersection(z.boolean(), z.null()))"
+            );
+        }
+    }
+
+    mod parse_any_of {
+        #[allow(unused_imports)]
+        use super::*;
+
+        #[test]
+        fn union_from_two_or_more() {
+            assert_eq!(
+                parse_any_of(
+                    &json!({ "anyOf": [{ "type": "string" }, { "type": "number" }] }),
+                    &refs_v4()
+                ),
+                "z.union([z.string(), z.number()])"
+            );
+        }
+
+        #[test]
+        fn single_schema_unwraps() {
+            assert_eq!(
+                parse_any_of(&json!({ "anyOf": [{ "type": "string" }] }), &refs_v4()),
+                "z.string()"
+            );
+        }
+
+        #[test]
+        fn empty_is_any() {
+            assert_eq!(parse_any_of(&json!({ "anyOf": [] }), &refs_v4()), "z.any()");
+        }
+    }
+
+    mod parse_one_of {
+        #[allow(unused_imports)]
+        use super::*;
+
+        #[test]
+        fn v3_union_from_two_or_more() {
+            let expected = r#"z.any().superRefine((x, ctx) => {
+    const schemas = [z.string(), z.number()];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.ZodError[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, result.error],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: ctx.path,
+        code: "invalid_union",
+        unionErrors: errors,
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: ctx.path,
+        code: "custom",
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  })"#;
+            assert_eq!(
+                parse_one_of(
+                    &json!({ "oneOf": [{ "type": "string" }, { "type": "number" }] }),
+                    &refs_v3()
+                ),
+                expected
+            );
+        }
+
+        #[test]
+        fn single_schema_unwraps() {
+            assert_eq!(
+                parse_one_of(&json!({ "oneOf": [{ "type": "string" }] }), &refs_v4()),
+                "z.string()"
+            );
+        }
+
+        #[test]
+        fn empty_is_any() {
+            assert_eq!(parse_one_of(&json!({ "oneOf": [] }), &refs_v4()), "z.any()");
+        }
+    }
+
+    mod parse_not {
+        #[allow(unused_imports)]
+        use super::*;
+
+        #[test]
+        fn refine_rejects_inner_schema() {
+            assert_eq!(
+                parse_not(&json!({ "not": { "type": "string" } }), &refs_v4()),
+                r#"z.any().refine((value) => !z.string().safeParse(value).success, "Invalid input: Should NOT be valid against schema")"#
+            );
+        }
+    }
+
+    mod parse_object {
+        #[allow(unused_imports)]
+        use super::*;
+
+        #[test]
+        fn missing_properties() {
+            assert_eq!(
+                parse_object(&json!({ "type": "object" }), &refs_v4()),
+                "z.record(z.string(), z.any())"
+            );
+        }
+
+        #[test]
+        fn empty_properties() {
+            assert_eq!(
+                parse_object(&json!({ "type": "object", "properties": {} }), &refs_v4()),
+                "z.object({})"
+            );
+        }
+
+        #[test]
+        fn optional_and_required_properties() {
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["myRequiredString"],
+                        "properties": {
+                            "myOptionalString": { "type": "string" },
+                            "myRequiredString": { "type": "string" }
+                        }
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.object({ "myOptionalString": z.string().optional(), "myRequiredString": z.string() })"#
+            );
+        }
+
+        #[test]
+        fn additional_properties_false_with_props() {
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["myString"],
+                        "properties": { "myString": { "type": "string" } },
+                        "additionalProperties": false
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.object({ "myString": z.string() }).strict()"#
+            );
+        }
+
+        #[test]
+        fn additional_properties_true_with_props() {
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["myString"],
+                        "properties": { "myString": { "type": "string" } },
+                        "additionalProperties": true
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.object({ "myString": z.string() }).catchall(z.any())"#
+            );
+        }
+
+        #[test]
+        fn additional_properties_schema_with_props() {
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["myString"],
+                        "properties": { "myString": { "type": "string" } },
+                        "additionalProperties": { "type": "number" }
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.object({ "myString": z.string() }).catchall(z.number())"#
+            );
+        }
+
+        #[test]
+        fn additional_properties_false_without_props() {
+            assert_eq!(
+                parse_object(
+                    &json!({ "type": "object", "additionalProperties": false }),
+                    &refs_v4()
+                ),
+                "z.record(z.string(), z.never())"
+            );
+        }
+
+        #[test]
+        fn additional_properties_true_without_props() {
+            assert_eq!(
+                parse_object(
+                    &json!({ "type": "object", "additionalProperties": true }),
+                    &refs_v4()
+                ),
+                "z.record(z.string(), z.any())"
+            );
+        }
+
+        #[test]
+        fn additional_properties_schema_without_props() {
+            assert_eq!(
+                parse_object(
+                    &json!({ "type": "object", "additionalProperties": { "type": "number" } }),
+                    &refs_v4()
+                ),
+                "z.record(z.string(), z.number())"
+            );
+        }
+
+        #[test]
+        fn falsy_default_in_prop() {
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "properties": { "s": { "type": "string", "default": "" } }
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.object({ "s": z.string().default("") })"#
+            );
+        }
+
+        #[test]
+        fn object_with_any_of() {
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["a"],
+                        "properties": { "a": { "type": "string" } },
+                        "anyOf": [
+                            { "required": ["b"], "properties": { "b": { "type": "string" } } },
+                            { "required": ["c"], "properties": { "c": { "type": "string" } } }
+                        ]
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.object({ "a": z.string() }).and(z.union([z.object({ "b": z.string() }), z.object({ "c": z.string() })]))"#
+            );
+        }
+
+        #[test]
+        fn object_with_any_of_empty_member() {
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["a"],
+                        "properties": { "a": { "type": "string" } },
+                        "anyOf": [
+                            { "required": ["b"], "properties": { "b": { "type": "string" } } },
+                            {}
+                        ]
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.object({ "a": z.string() }).and(z.union([z.object({ "b": z.string() }), z.any()]))"#
+            );
+        }
+
+        #[test]
+        fn object_with_one_of() {
+            let expected = r#"z.object({ "a": z.string() }).and(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "b": z.string() }), z.object({ "c": z.string() })];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }))"#;
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["a"],
+                        "properties": { "a": { "type": "string" } },
+                        "oneOf": [
+                            { "required": ["b"], "properties": { "b": { "type": "string" } } },
+                            { "required": ["c"], "properties": { "c": { "type": "string" } } }
+                        ]
+                    }),
+                    &refs_v4()
+                ),
+                expected
+            );
+        }
+
+        #[test]
+        fn object_with_one_of_empty_member() {
+            let expected = r#"z.object({ "a": z.string() }).and(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "b": z.string() }), z.any()];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }))"#;
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["a"],
+                        "properties": { "a": { "type": "string" } },
+                        "oneOf": [
+                            { "required": ["b"], "properties": { "b": { "type": "string" } } },
+                            {}
+                        ]
+                    }),
+                    &refs_v4()
+                ),
+                expected
+            );
+        }
+
+        #[test]
+        fn object_with_all_of() {
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["a"],
+                        "properties": { "a": { "type": "string" } },
+                        "allOf": [
+                            { "required": ["b"], "properties": { "b": { "type": "string" } } },
+                            { "required": ["c"], "properties": { "c": { "type": "string" } } }
+                        ]
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.object({ "a": z.string() }).and(z.intersection(z.object({ "b": z.string() }), z.object({ "c": z.string() })))"#
+            );
+        }
+
+        #[test]
+        fn object_with_all_of_empty_member() {
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["a"],
+                        "properties": { "a": { "type": "string" } },
+                        "allOf": [
+                            { "required": ["b"], "properties": { "b": { "type": "string" } } },
+                            {}
+                        ]
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.object({ "a": z.string() }).and(z.intersection(z.object({ "b": z.string() }), z.any()))"#
+            );
+        }
+
+        #[test]
+        fn functional_properties_shape() {
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["a"],
+                        "properties": { "a": { "type": "string" }, "b": { "type": "number" } }
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.object({ "a": z.string(), "b": z.number().optional() })"#
+            );
+        }
+
+        #[test]
+        fn properties_and_additional_properties() {
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["a"],
+                        "properties": { "a": { "type": "string" }, "b": { "type": "number" } },
+                        "additionalProperties": { "type": "boolean" }
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.object({ "a": z.string(), "b": z.number().optional() }).catchall(z.boolean())"#
+            );
+        }
+
+        #[test]
+        fn properties_and_single_pattern_properties() {
+            let expected = r#"z.object({ "a": z.string(), "b": z.number().optional() }).catchall(z.array(z.any())).superRefine((value, ctx) => {
+for (const key in value) {
+if (key.match(new RegExp("\\."))) {
+const result = z.array(z.any()).safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: Key matching regex /${key}/ must match schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+}
+})"#;
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["a"],
+                        "properties": { "a": { "type": "string" }, "b": { "type": "number" } },
+                        "patternProperties": { "\\.": { "type": "array" } }
+                    }),
+                    &refs_v4()
+                ),
+                expected
+            );
+        }
+
+        #[test]
+        fn properties_additional_and_pattern_properties() {
+            let expected = r#"z.object({ "a": z.string(), "b": z.number().optional() }).catchall(z.union([z.array(z.any()), z.array(z.any()).min(1), z.boolean()])).superRefine((value, ctx) => {
+for (const key in value) {
+let evaluated = ["a", "b"].includes(key)
+if (key.match(new RegExp("\\."))) {
+evaluated = true
+const result = z.array(z.any()).safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: Key matching regex /${key}/ must match schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+if (key.match(new RegExp("\\,"))) {
+evaluated = true
+const result = z.array(z.any()).min(1).safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: Key matching regex /${key}/ must match schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+if (!evaluated) {
+const result = z.boolean().safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: must match catchall schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+}
+})"#;
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["a"],
+                        "properties": { "a": { "type": "string" }, "b": { "type": "number" } },
+                        "additionalProperties": { "type": "boolean" },
+                        "patternProperties": {
+                            "\\.": { "type": "array" },
+                            "\\,": { "type": "array", "minItems": 1 }
+                        }
+                    }),
+                    &refs_v4()
+                ),
+                expected
+            );
+        }
+
+        #[test]
+        fn additional_properties_only() {
+            assert_eq!(
+                parse_object(
+                    &json!({ "type": "object", "additionalProperties": { "type": "boolean" } }),
+                    &refs_v4()
+                ),
+                "z.record(z.string(), z.boolean())"
+            );
+        }
+
+        #[test]
+        fn additional_and_pattern_properties() {
+            let expected = r#"z.record(z.string(), z.union([z.array(z.any()), z.array(z.any()).min(1), z.boolean()])).superRefine((value, ctx) => {
+for (const key in value) {
+let evaluated = false
+if (key.match(new RegExp("\\."))) {
+evaluated = true
+const result = z.array(z.any()).safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: Key matching regex /${key}/ must match schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+if (key.match(new RegExp("\\,"))) {
+evaluated = true
+const result = z.array(z.any()).min(1).safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: Key matching regex /${key}/ must match schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+if (!evaluated) {
+const result = z.boolean().safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: must match catchall schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+}
+})"#;
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "additionalProperties": { "type": "boolean" },
+                        "patternProperties": {
+                            "\\.": { "type": "array" },
+                            "\\,": { "type": "array", "minItems": 1 }
+                        }
+                    }),
+                    &refs_v4()
+                ),
+                expected
+            );
+        }
+
+        #[test]
+        fn single_item_pattern_properties() {
+            let expected = r#"z.record(z.string(), z.array(z.any())).superRefine((value, ctx) => {
+for (const key in value) {
+if (key.match(new RegExp("\\."))) {
+const result = z.array(z.any()).safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: Key matching regex /${key}/ must match schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+}
+})"#;
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "patternProperties": { "\\.": { "type": "array" } }
+                    }),
+                    &refs_v4()
+                ),
+                expected
+            );
+        }
+
+        #[test]
+        fn pattern_properties_multi() {
+            let expected = r#"z.record(z.string(), z.union([z.array(z.any()), z.array(z.any()).min(1)])).superRefine((value, ctx) => {
+for (const key in value) {
+if (key.match(new RegExp("\\."))) {
+const result = z.array(z.any()).safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: Key matching regex /${key}/ must match schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+if (key.match(new RegExp("\\,"))) {
+const result = z.array(z.any()).min(1).safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: Key matching regex /${key}/ must match schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+}
+})"#;
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "patternProperties": {
+                            "\\.": { "type": "array" },
+                            "\\,": { "type": "array", "minItems": 1 }
+                        }
+                    }),
+                    &refs_v4()
+                ),
+                expected
+            );
+        }
+
+        #[test]
+        fn pattern_properties_and_properties() {
+            let expected = r#"z.object({ "a": z.string(), "b": z.number().optional() }).catchall(z.union([z.array(z.any()), z.array(z.any()).min(1)])).superRefine((value, ctx) => {
+for (const key in value) {
+if (key.match(new RegExp("\\."))) {
+const result = z.array(z.any()).safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: Key matching regex /${key}/ must match schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+if (key.match(new RegExp("\\,"))) {
+const result = z.array(z.any()).min(1).safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: Key matching regex /${key}/ must match schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+}
+})"#;
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "required": ["a"],
+                        "properties": { "a": { "type": "string" }, "b": { "type": "number" } },
+                        "patternProperties": {
+                            "\\.": { "type": "array" },
+                            "\\,": { "type": "array", "minItems": 1 }
+                        }
+                    }),
+                    &refs_v4()
+                ),
+                expected
+            );
+        }
+
+        // Zod v3 variants.
+
+        #[test]
+        fn v3_missing_properties() {
+            assert_eq!(
+                parse_object(&json!({ "type": "object" }), &refs_v3()),
+                "z.record(z.any())"
+            );
+        }
+
+        #[test]
+        fn v3_additional_properties_false_without_props() {
+            assert_eq!(
+                parse_object(
+                    &json!({ "type": "object", "additionalProperties": false }),
+                    &refs_v3()
+                ),
+                "z.record(z.never())"
+            );
+        }
+
+        #[test]
+        fn v3_additional_properties_true_without_props() {
+            assert_eq!(
+                parse_object(
+                    &json!({ "type": "object", "additionalProperties": true }),
+                    &refs_v3()
+                ),
+                "z.record(z.any())"
+            );
+        }
+
+        #[test]
+        fn v3_additional_properties_schema_without_props() {
+            assert_eq!(
+                parse_object(
+                    &json!({ "type": "object", "additionalProperties": { "type": "number" } }),
+                    &refs_v3()
+                ),
+                "z.record(z.number())"
+            );
+        }
+
+        #[test]
+        fn v3_additional_properties_functional() {
+            assert_eq!(
+                parse_object(
+                    &json!({ "type": "object", "additionalProperties": { "type": "boolean" } }),
+                    &refs_v3()
+                ),
+                "z.record(z.boolean())"
+            );
+        }
+
+        #[test]
+        fn v3_pattern_properties_uses_ctx_path() {
+            let expected = r#"z.record(z.array(z.any())).superRefine((value, ctx) => {
+for (const key in value) {
+if (key.match(new RegExp("\\."))) {
+const result = z.array(z.any()).safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [...ctx.path, key],
+          code: 'custom',
+          message: `Invalid input: Key matching regex /${key}/ must match schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+}
+})"#;
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "patternProperties": { "\\.": { "type": "array" } }
+                    }),
+                    &refs_v3()
+                ),
+                expected
+            );
+        }
+
+        #[test]
+        fn v3_additional_and_pattern_properties() {
+            let expected = r#"z.record(z.union([z.array(z.any()), z.boolean()])).superRefine((value, ctx) => {
+for (const key in value) {
+let evaluated = false
+if (key.match(new RegExp("\\."))) {
+evaluated = true
+const result = z.array(z.any()).safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [...ctx.path, key],
+          code: 'custom',
+          message: `Invalid input: Key matching regex /${key}/ must match schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+if (!evaluated) {
+const result = z.boolean().safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [...ctx.path, key],
+          code: 'custom',
+          message: `Invalid input: must match catchall schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+}
+})"#;
+            assert_eq!(
+                parse_object(
+                    &json!({
+                        "type": "object",
+                        "additionalProperties": { "type": "boolean" },
+                        "patternProperties": { "\\.": { "type": "array" } }
+                    }),
+                    &refs_v3()
+                ),
+                expected
+            );
+        }
+    }
+
+    mod parse_simple_discriminated {
+        #[allow(unused_imports)]
+        use super::*;
+
+        fn guard(v: Value) -> bool {
+            is_simple_discriminated_one_of(&v)
+        }
+
+        #[test]
+        fn emit_two_or_more_members() {
+            assert_eq!(
+                parse_simple_discriminated_one_of(
+                    &json!({
+                        "discriminator": { "propertyName": "objectType" },
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": { "objectType": { "type": "string", "enum": ["typeA"] } },
+                                "required": ["objectType"]
+                            },
+                            {
+                                "type": "object",
+                                "properties": { "objectType": { "type": "string", "enum": ["typeB"] } },
+                                "required": ["objectType"]
+                            }
+                        ]
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.discriminatedUnion("objectType", [z.object({ "objectType": z.literal("typeA") }), z.object({ "objectType": z.literal("typeB") })])"#
+            );
+        }
+
+        #[test]
+        fn emit_single_member_unwraps() {
+            assert_eq!(
+                parse_simple_discriminated_one_of(
+                    &json!({
+                        "discriminator": { "propertyName": "objectType" },
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": { "objectType": { "type": "string", "enum": ["typeA"] } },
+                                "required": ["objectType"]
+                            }
+                        ]
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.object({ "objectType": z.literal("typeA") })"#
+            );
+        }
+
+        #[test]
+        fn emit_empty_is_any() {
+            assert_eq!(
+                parse_simple_discriminated_one_of(
+                    &json!({ "oneOf": [], "discriminator": { "propertyName": "objectType" } }),
+                    &refs_v4()
+                ),
+                "z.any()"
+            );
+        }
+
+        #[test]
+        fn emit_const_discriminator() {
+            assert_eq!(
+                parse_simple_discriminated_one_of(
+                    &json!({
+                        "discriminator": { "propertyName": "kind" },
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "kind": { "type": "string", "const": "person" },
+                                    "name": { "type": "string" }
+                                },
+                                "required": ["kind", "name"]
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "kind": { "type": "string", "const": "company" },
+                                    "companyName": { "type": "string" }
+                                },
+                                "required": ["kind", "companyName"]
+                            }
+                        ]
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.discriminatedUnion("kind", [z.object({ "kind": z.literal("person"), "name": z.string() }), z.object({ "kind": z.literal("company"), "companyName": z.string() })])"#
+            );
+        }
+
+        // Type guard accept cases.
+
+        #[test]
+        fn guard_accepts_const_values() {
+            assert!(guard(json!({
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "type": { "type": "string", "const": "A" },
+                            "value": { "type": "string" }
+                        },
+                        "required": ["type", "value"]
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "type": { "type": "string", "const": "B" },
+                            "count": { "type": "number" }
+                        },
+                        "required": ["type", "count"]
+                    }
+                ],
+                "discriminator": { "propertyName": "type" }
+            })));
+        }
+
+        #[test]
+        fn guard_accepts_single_value_enum() {
+            assert!(guard(json!({
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "kind": { "type": "string", "enum": ["person"] },
+                            "name": { "type": "string" }
+                        },
+                        "required": ["kind", "name"]
+                    }
+                ],
+                "discriminator": { "propertyName": "kind" }
+            })));
+        }
+
+        #[test]
+        fn guard_accepts_discriminator_in_required() {
+            assert!(guard(json!({
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "type": { "type": "string", "const": "A" },
+                            "value": { "type": "string" }
+                        },
+                        "required": ["type", "value"]
+                    }
+                ],
+                "discriminator": { "propertyName": "type" }
+            })));
+        }
+
+        // Type guard reject cases.
+
+        #[test]
+        fn guard_rejects_numeric_discriminator() {
+            assert!(!guard(json!({
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "version": { "type": "number", "const": 1 },
+                            "data": { "type": "string" }
+                        }
+                    }
+                ],
+                "discriminator": { "propertyName": "version" }
+            })));
+        }
+
+        #[test]
+        fn guard_rejects_no_one_of() {
+            assert!(!guard(
+                json!({ "discriminator": { "propertyName": "type" } })
+            ));
+        }
+
+        #[test]
+        fn guard_rejects_no_discriminator() {
+            assert!(!guard(json!({
+                "oneOf": [
+                    { "type": "object", "properties": { "type": { "type": "string", "const": "A" } } }
+                ]
+            })));
+        }
+
+        #[test]
+        fn guard_rejects_empty_one_of() {
+            assert!(!guard(json!({
+                "oneOf": [],
+                "discriminator": { "propertyName": "type" }
+            })));
+        }
+
+        #[test]
+        fn guard_rejects_discriminator_without_property_name() {
+            assert!(!guard(json!({
+                "oneOf": [
+                    { "type": "object", "properties": { "type": { "type": "string", "const": "A" } } }
+                ],
+                "discriminator": {}
+            })));
+        }
+
+        #[test]
+        fn guard_rejects_non_string_property_name() {
+            assert!(!guard(json!({
+                "oneOf": [
+                    { "type": "object", "properties": { "type": { "type": "string", "const": "A" } } }
+                ],
+                "discriminator": { "propertyName": 123 }
+            })));
+        }
+
+        #[test]
+        fn guard_rejects_non_object_one_of_member() {
+            assert!(!guard(json!({
+                "oneOf": [
+                    { "type": "string" },
+                    { "type": "object", "properties": { "type": { "type": "string", "const": "A" } } }
+                ],
+                "discriminator": { "propertyName": "type" }
+            })));
+        }
+
+        #[test]
+        fn guard_rejects_member_missing_discriminator_prop() {
+            assert!(!guard(json!({
+                "oneOf": [
+                    { "type": "object", "properties": { "value": { "type": "string" } } }
+                ],
+                "discriminator": { "propertyName": "type" }
+            })));
+        }
+
+        #[test]
+        fn guard_rejects_prop_without_const_or_single_enum() {
+            assert!(!guard(json!({
+                "oneOf": [
+                    { "type": "object", "properties": { "type": { "type": "string" } } }
+                ],
+                "discriminator": { "propertyName": "type" }
+            })));
+        }
+
+        #[test]
+        fn guard_rejects_multi_value_enum() {
+            assert!(!guard(json!({
+                "oneOf": [
+                    { "type": "object", "properties": { "type": { "type": "string", "enum": ["A", "B"] } } }
+                ],
+                "discriminator": { "propertyName": "type" }
+            })));
+        }
+
+        #[test]
+        fn guard_rejects_member_without_properties() {
+            assert!(!guard(json!({
+                "oneOf": [{ "type": "object" }],
+                "discriminator": { "propertyName": "type" }
+            })));
+        }
+
+        #[test]
+        fn guard_rejects_unsupported_discriminator_type() {
+            assert!(!guard(json!({
+                "oneOf": [
+                    { "type": "object", "properties": { "type": { "type": "boolean", "const": true } } }
+                ],
+                "discriminator": { "propertyName": "type" }
+            })));
+        }
+
+        #[test]
+        fn guard_rejects_null_and_undefined_one_of() {
+            assert!(!guard(json!({
+                "oneOf": null,
+                "discriminator": { "propertyName": "type" }
+            })));
+            // Absent oneOf stands in for JS undefined.
+            assert!(!guard(json!({
+                "discriminator": { "propertyName": "type" }
+            })));
+        }
+
+        #[test]
+        fn guard_rejects_discriminator_not_in_required() {
+            assert!(!guard(json!({
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "type": { "type": "string", "const": "A" },
+                            "value": { "type": "string" }
+                        },
+                        "required": ["value"]
+                    }
+                ],
+                "discriminator": { "propertyName": "type" }
+            })));
+        }
+
+        #[test]
+        fn guard_rejects_no_required_array() {
+            assert!(!guard(json!({
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "type": { "type": "string", "const": "A" },
+                            "value": { "type": "string" }
+                        }
+                    }
+                ],
+                "discriminator": { "propertyName": "type" }
+            })));
+        }
+
+        #[test]
+        fn guard_rejects_non_array_required() {
+            assert!(!guard(json!({
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "type": { "type": "string", "const": "A" },
+                            "value": { "type": "string" }
+                        },
+                        "required": true
+                    }
+                ],
+                "discriminator": { "propertyName": "type" }
+            })));
+        }
     }
 }
