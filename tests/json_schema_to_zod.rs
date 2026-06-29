@@ -12,9 +12,11 @@ fn esm() -> Options {
 
 #[test]
 fn accepts_schema_smoke() {
-    assert!(!json_schema_to_zod(&json!({ "type": "string" }), Options::default())
-        .unwrap()
-        .is_empty());
+    assert!(
+        !json_schema_to_zod(&json!({ "type": "string" }), Options::default())
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]

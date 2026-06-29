@@ -82,7 +82,8 @@ fn params() -> BTreeMap<&'static str, Param> {
             shorthand: "d",
             value: ParamValue::Number,
             required: Required::No,
-            description: "Maximum depth of recursion before falling back to z.any(). Defaults to 0.",
+            description:
+                "Maximum depth of recursion before falling back to z.any(). Defaults to 0.",
         },
     );
     m.insert(

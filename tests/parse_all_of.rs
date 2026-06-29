@@ -6,7 +6,10 @@ use serde_json::json;
 
 #[test]
 fn empty_is_never() {
-    assert_eq!(parse_all_of(&json!({ "allOf": [] }), &refs_v4()), "z.never()");
+    assert_eq!(
+        parse_all_of(&json!({ "allOf": [] }), &refs_v4()),
+        "z.never()"
+    );
 }
 
 #[test]

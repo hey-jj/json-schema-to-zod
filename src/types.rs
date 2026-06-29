@@ -8,18 +8,13 @@ use serde_json::Value;
 
 /// Target Zod major version. The version changes `z.record` arity and the
 /// `superRefine` error path and issue shape. Everything else is identical.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ZodVersion {
     /// Zod 3 idioms: `z.record(value)` and `path: [...ctx.path, key]`.
     V3,
     /// Zod 4 idioms: `z.record(z.string(), value)` and `path: [key]`.
+    #[default]
     V4,
-}
-
-impl Default for ZodVersion {
-    fn default() -> Self {
-        ZodVersion::V4
-    }
 }
 
 /// How the output is wrapped.

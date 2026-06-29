@@ -79,9 +79,7 @@ pub fn json_schema_to_zod(schema: &Value, mut options: Options) -> Result<String
     let with_jsdocs = options.with_jsdocs;
 
     if type_export.is_some() && (name.is_none() || module != Some(Module::Esm)) {
-        return Err(
-            "Option `type` requires `name` to be set and `module` to be `esm`".to_string(),
-        );
+        return Err("Option `type` requires `name` to be set and `module` to be `esm`".to_string());
     }
 
     let refs = Refs::from_options(&mut options);

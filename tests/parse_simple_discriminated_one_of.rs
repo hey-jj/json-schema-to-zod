@@ -176,7 +176,9 @@ fn guard_rejects_numeric_discriminator() {
 
 #[test]
 fn guard_rejects_no_one_of() {
-    assert!(!guard(json!({ "discriminator": { "propertyName": "type" } })));
+    assert!(!guard(
+        json!({ "discriminator": { "propertyName": "type" } })
+    ));
 }
 
 #[test]

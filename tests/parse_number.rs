@@ -3,7 +3,10 @@ use serde_json::json;
 
 #[test]
 fn integer() {
-    assert_eq!(parse_number(&json!({ "type": "integer" })), "z.number().int()");
+    assert_eq!(
+        parse_number(&json!({ "type": "integer" })),
+        "z.number().int()"
+    );
     assert_eq!(
         parse_number(&json!({ "type": "integer", "multipleOf": 1 })),
         "z.number().int()"

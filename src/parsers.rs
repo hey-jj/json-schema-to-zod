@@ -127,14 +127,26 @@ pub fn parse_string(schema: &Value) -> String {
     r.push_str(&with_message(
         schema,
         "minLength",
-        |_value, json| Some(Builder::Three(format!(".min({json}"), ", ".into(), ")".into())),
+        |_value, json| {
+            Some(Builder::Three(
+                format!(".min({json}"),
+                ", ".into(),
+                ")".into(),
+            ))
+        },
         None,
     ));
 
     r.push_str(&with_message(
         schema,
         "maxLength",
-        |_value, json| Some(Builder::Three(format!(".max({json}"), ", ".into(), ")".into())),
+        |_value, json| {
+            Some(Builder::Three(
+                format!(".max({json}"),
+                ", ".into(),
+                ")".into(),
+            ))
+        },
         None,
     ));
 
@@ -239,7 +251,10 @@ pub fn parse_number(schema: &Value) -> String {
         None,
     ));
 
-    let minimum_is_number = schema.get("minimum").map(|v| v.is_number()).unwrap_or(false);
+    let minimum_is_number = schema
+        .get("minimum")
+        .map(|v| v.is_number())
+        .unwrap_or(false);
     let exclusive_min_is_number = schema
         .get("exclusiveMinimum")
         .map(|v| v.is_number())
@@ -251,14 +266,26 @@ pub fn parse_number(schema: &Value) -> String {
             r.push_str(&with_message(
                 schema,
                 "minimum",
-                |_v, json| Some(Builder::Three(format!(".gt({json}"), ", ".into(), ")".into())),
+                |_v, json| {
+                    Some(Builder::Three(
+                        format!(".gt({json}"),
+                        ", ".into(),
+                        ")".into(),
+                    ))
+                },
                 None,
             ));
         } else {
             r.push_str(&with_message(
                 schema,
                 "minimum",
-                |_v, json| Some(Builder::Three(format!(".gte({json}"), ", ".into(), ")".into())),
+                |_v, json| {
+                    Some(Builder::Three(
+                        format!(".gte({json}"),
+                        ", ".into(),
+                        ")".into(),
+                    ))
+                },
                 None,
             ));
         }
@@ -266,12 +293,21 @@ pub fn parse_number(schema: &Value) -> String {
         r.push_str(&with_message(
             schema,
             "exclusiveMinimum",
-            |_v, json| Some(Builder::Three(format!(".gt({json}"), ", ".into(), ")".into())),
+            |_v, json| {
+                Some(Builder::Three(
+                    format!(".gt({json}"),
+                    ", ".into(),
+                    ")".into(),
+                ))
+            },
             None,
         ));
     }
 
-    let maximum_is_number = schema.get("maximum").map(|v| v.is_number()).unwrap_or(false);
+    let maximum_is_number = schema
+        .get("maximum")
+        .map(|v| v.is_number())
+        .unwrap_or(false);
     let exclusive_max_is_number = schema
         .get("exclusiveMaximum")
         .map(|v| v.is_number())
@@ -283,14 +319,26 @@ pub fn parse_number(schema: &Value) -> String {
             r.push_str(&with_message(
                 schema,
                 "maximum",
-                |_v, json| Some(Builder::Three(format!(".lt({json}"), ", ".into(), ")".into())),
+                |_v, json| {
+                    Some(Builder::Three(
+                        format!(".lt({json}"),
+                        ", ".into(),
+                        ")".into(),
+                    ))
+                },
                 None,
             ));
         } else {
             r.push_str(&with_message(
                 schema,
                 "maximum",
-                |_v, json| Some(Builder::Three(format!(".lte({json}"), ", ".into(), ")".into())),
+                |_v, json| {
+                    Some(Builder::Three(
+                        format!(".lte({json}"),
+                        ", ".into(),
+                        ")".into(),
+                    ))
+                },
                 None,
             ));
         }
@@ -298,7 +346,13 @@ pub fn parse_number(schema: &Value) -> String {
         r.push_str(&with_message(
             schema,
             "exclusiveMaximum",
-            |_v, json| Some(Builder::Three(format!(".lt({json}"), ", ".into(), ")".into())),
+            |_v, json| {
+                Some(Builder::Three(
+                    format!(".lt({json}"),
+                    ", ".into(),
+                    ")".into(),
+                ))
+            },
             None,
         ));
     }
@@ -336,14 +390,26 @@ pub fn parse_array(schema: &Value, refs: &Refs) -> String {
     r.push_str(&with_message(
         schema,
         "minItems",
-        |_v, json| Some(Builder::Three(format!(".min({json}"), ", ".into(), ")".into())),
+        |_v, json| {
+            Some(Builder::Three(
+                format!(".min({json}"),
+                ", ".into(),
+                ")".into(),
+            ))
+        },
         None,
     ));
 
     r.push_str(&with_message(
         schema,
         "maxItems",
-        |_v, json| Some(Builder::Three(format!(".max({json}"), ", ".into(), ")".into())),
+        |_v, json| {
+            Some(Builder::Three(
+                format!(".max({json}"),
+                ", ".into(),
+                ")".into(),
+            ))
+        },
         None,
     ));
 
@@ -597,7 +663,11 @@ pub fn parse_one_of(schema: &Value, refs: &Refs) -> String {
     } else {
         "errors: [errors]"
     };
-    let custom_extra = if is3 { "" } else { "\n        errors: [errors]," };
+    let custom_extra = if is3 {
+        ""
+    } else {
+        "\n        errors: [errors],"
+    };
 
     format!(
         r#"z.any().superRefine((x, ctx) => {{
@@ -715,8 +785,7 @@ pub fn parse_object(schema: &Value, refs: &Refs) -> String {
             let entries = props_map
                 .iter()
                 .map(|(prop_key, prop_schema)| {
-                    let child =
-                        refs.with_path(refs.push_path(&[key("properties"), key(prop_key)]));
+                    let child = refs.with_path(refs.push_path(&[key("properties"), key(prop_key)]));
                     let mut result = format!(
                         "{}: {}",
                         json_stringify_str(prop_key),
@@ -727,8 +796,8 @@ pub fn parse_object(schema: &Value, refs: &Refs) -> String {
                         result = add_jsdocs(prop_schema, &result);
                     }
 
-                    let has_default = prop_schema.is_object()
-                        && prop_schema.get("default").is_some();
+                    let has_default =
+                        prop_schema.is_object() && prop_schema.get("default").is_some();
 
                     let required = match required_array {
                         Some(arr) => arr.iter().any(|r| r.as_str() == Some(prop_key.as_str())),
@@ -830,14 +899,15 @@ fn build_pattern_properties(
     properties: &Option<String>,
     additional_properties: &Option<String>,
 ) -> Option<String> {
-    let pattern_map = schema.get("patternProperties").and_then(|p| p.as_object())?;
+    let pattern_map = schema
+        .get("patternProperties")
+        .and_then(|p| p.as_object())?;
 
     // Parse each pattern value once, preserving key order.
     let parsed: Vec<(String, String)> = pattern_map
         .iter()
         .map(|(pkey, value)| {
-            let child =
-                refs.with_path(refs.push_path(&[key("patternProperties"), key(pkey)]));
+            let child = refs.with_path(refs.push_path(&[key("patternProperties"), key(pkey)]));
             (pkey.clone(), parse_schema(value, &child, false))
         })
         .collect();
@@ -859,9 +929,15 @@ fn build_pattern_properties(
     } else if let Some(ap) = additional_properties {
         let mut all = values.clone();
         all.push(ap.clone());
-        pp.push_str(&emit_record(&format!("z.union([{}])", all.join(", ")), refs));
+        pp.push_str(&emit_record(
+            &format!("z.union([{}])", all.join(", ")),
+            refs,
+        ));
     } else if values.len() > 1 {
-        pp.push_str(&emit_record(&format!("z.union([{}])", values.join(", ")), refs));
+        pp.push_str(&emit_record(
+            &format!("z.union([{}])", values.join(", ")),
+            refs,
+        ));
     } else {
         pp.push_str(&emit_record(&values.join(","), refs));
     }

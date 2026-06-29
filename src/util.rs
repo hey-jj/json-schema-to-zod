@@ -43,12 +43,7 @@ pub enum Builder {
 /// `get` with the raw value and its `JSON.stringify` form. If `get` returns a
 /// builder, assembles the opener, the optional `errorMessage[key]` or
 /// `fallback`, and the closer.
-pub fn with_message<F>(
-    schema: &Value,
-    key: &str,
-    get: F,
-    fallback: Option<&str>,
-) -> String
+pub fn with_message<F>(schema: &Value, key: &str, get: F, fallback: Option<&str>) -> String
 where
     F: FnOnce(&Value, &str) -> Option<Builder>,
 {

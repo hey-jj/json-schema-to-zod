@@ -142,8 +142,14 @@ fn one_of_v4() {
 
 #[test]
 fn bare_boolean_and_null_parsers() {
-    assert_eq!(parse_schema(&json!({ "type": "boolean" }), &refs_v4()), "z.boolean()");
-    assert_eq!(parse_schema(&json!({ "type": "null" }), &refs_v4()), "z.null()");
+    assert_eq!(
+        parse_schema(&json!({ "type": "boolean" }), &refs_v4()),
+        "z.boolean()"
+    );
+    assert_eq!(
+        parse_schema(&json!({ "type": "null" }), &refs_v4()),
+        "z.null()"
+    );
 }
 
 #[test]
@@ -151,7 +157,10 @@ fn empty_schema_falls_through_to_any() {
     // {} has no type, so no construct matches and the fallback is z.any().
     assert_eq!(parse_schema(&json!({}), &refs_v4()), "z.any()");
     // type "any" is not a recognized primitive, so it also falls through.
-    assert_eq!(parse_schema(&json!({ "type": "any" }), &refs_v4()), "z.any()");
+    assert_eq!(
+        parse_schema(&json!({ "type": "any" }), &refs_v4()),
+        "z.any()"
+    );
 }
 
 #[test]
@@ -195,7 +204,10 @@ fn ignored_object_keywords_are_dropped() {
 #[test]
 fn unknown_string_format_is_plain_string() {
     assert_eq!(
-        parse_schema(&json!({ "type": "string", "format": "hostname" }), &refs_v4()),
+        parse_schema(
+            &json!({ "type": "string", "format": "hostname" }),
+            &refs_v4()
+        ),
         "z.string()"
     );
 }
@@ -216,7 +228,10 @@ fn json_escaping_in_literals_and_keys() {
         r#"z.object({ "a\"b": z.string() })"#
     );
     assert_eq!(
-        parse_schema(&json!({ "type": "string", "description": "line1\nline2" }), &refs_v4()),
+        parse_schema(
+            &json!({ "type": "string", "description": "line1\nline2" }),
+            &refs_v4()
+        ),
         r#"z.string().describe("line1\nline2")"#
     );
 }
