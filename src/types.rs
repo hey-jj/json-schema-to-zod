@@ -35,12 +35,25 @@ pub type ParserOverride = Box<dyn Fn(&Value, &Refs) -> Option<String>>;
 
 /// Public options for [`json_schema_to_zod`](crate::json_schema_to_zod).
 ///
-/// All fields are optional. `zod_version` defaults to [`ZodVersion::V4`].
+/// All fields are optional. `zod_version` defaults to [`ZodVersion::V4`]. Start
+/// from [`Options::default`] and chain the setters, or assign fields directly.
+///
+/// ```
+/// use json_schema_to_zod::{Module, Options};
+///
+/// let opts = Options::default().module(Module::Esm).name("MySchema");
+/// ```
+///
+/// The struct is `#[non_exhaustive]`, so adding an option later is not a
+/// breaking change. Construct it through [`Options::default`] rather than a
+/// struct literal.
 #[derive(Default)]
+#[non_exhaustive]
 pub struct Options {
     /// Name of the schema constant in the output.
     pub name: Option<String>,
-    /// Module wrapping. `None` here means no wrapper (a bare expression).
+    /// Module wrapping. An absent value and [`Module::None`] both yield a bare
+    /// expression with no `import`/`require` and no `export`.
     pub module: Option<Module>,
     /// Drop `.default(...)` modifiers.
     pub without_defaults: bool,
@@ -60,6 +73,111 @@ pub struct Options {
     /// Target Zod version. Defaults to v4.
     pub zod_version: ZodVersion,
 }
+
+impl std::fmt::Debug for Options {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Options")
+            .field("name", &self.name)
+            .field("module", &self.module)
+            .field("without_defaults", &self.without_defaults)
+            .field("without_describes", &self.without_describes)
+            .field("with_jsdocs", &self.with_jsdocs)
+            .field(
+                "parser_override",
+                &self.parser_override.as_ref().map(|_| "<fn>"),
+            )
+            .field("depth", &self.depth)
+            .field("type_export", &self.type_export)
+            .field("no_import", &self.no_import)
+            .field("zod_version", &self.zod_version)
+            .finish()
+    }
+}
+
+impl Options {
+    /// Set the schema constant name in the output.
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Set the module wrapping.
+    pub fn module(mut self, module: Module) -> Self {
+        self.module = Some(module);
+        self
+    }
+
+    /// Drop `.default(...)` modifiers.
+    pub fn without_defaults(mut self, value: bool) -> Self {
+        self.without_defaults = value;
+        self
+    }
+
+    /// Drop `.describe(...)` modifiers.
+    pub fn without_describes(mut self, value: bool) -> Self {
+        self.without_describes = value;
+        self
+    }
+
+    /// Emit JSDoc blocks from `description` values.
+    pub fn with_jsdocs(mut self, value: bool) -> Self {
+        self.with_jsdocs = value;
+        self
+    }
+
+    /// Install a parser override hook.
+    pub fn parser_override(mut self, hook: ParserOverride) -> Self {
+        self.parser_override = Some(hook);
+        self
+    }
+
+    /// Set the maximum re-expansion depth for recursive nodes.
+    pub fn depth(mut self, depth: i64) -> Self {
+        self.depth = Some(depth);
+        self
+    }
+
+    /// Set the inferred type export.
+    pub fn type_export(mut self, export: TypeExport) -> Self {
+        self.type_export = Some(export);
+        self
+    }
+
+    /// Drop the `import`/`require` line.
+    pub fn no_import(mut self, value: bool) -> Self {
+        self.no_import = value;
+        self
+    }
+
+    /// Set the target Zod version.
+    pub fn zod_version(mut self, version: ZodVersion) -> Self {
+        self.zod_version = version;
+        self
+    }
+}
+
+/// An error from [`json_schema_to_zod`](crate::json_schema_to_zod).
+///
+/// The transform has one failure mode, so this is a single-variant enum. It
+/// exists as a type rather than a string so callers can match on it and so it
+/// implements [`std::error::Error`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Error {
+    /// A `type` export was requested without both a `name` and an ESM module.
+    TypeExportRequiresNameAndEsm,
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::TypeExportRequiresNameAndEsm => {
+                f.write_str("Option `type` requires `name` to be set and `module` to be `esm`")
+            }
+        }
+    }
+}
+
+impl std::error::Error for Error {}
 
 /// The `type` option: a flag that capitalizes `name`, or an explicit name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,6 +208,10 @@ pub enum PathSegment {
 
 /// Live reference state threaded through every parser.
 ///
+/// A parser override receives this by shared reference. Read the current
+/// breadcrumb with [`Refs::path`]. The fields stay crate-private so outside
+/// code cannot corrupt cycle detection or memoization.
+///
 /// `path` is informational. It feeds the parser override and the v3
 /// `superRefine` path. `seen` and `parser_override` are shared by reference so
 /// cycle detection, memoization, and the override hook stay consistent across
@@ -98,32 +220,41 @@ pub enum PathSegment {
 #[derive(Clone)]
 pub struct Refs {
     /// Breadcrumb of the current node.
-    pub path: Vec<PathSegment>,
+    pub(crate) path: Vec<PathSegment>,
     /// Identity map of visited nodes keyed by address, shared across frames.
-    pub seen: Rc<RefCell<HashMap<usize, Seen>>>,
+    pub(crate) seen: Rc<RefCell<HashMap<usize, Seen>>>,
     /// Drop `.default(...)` modifiers.
-    pub without_defaults: bool,
+    pub(crate) without_defaults: bool,
     /// Drop `.describe(...)` modifiers.
-    pub without_describes: bool,
+    pub(crate) without_describes: bool,
     /// Emit JSDoc blocks from `description` values.
-    pub with_jsdocs: bool,
+    pub(crate) with_jsdocs: bool,
     /// Maximum re-expansion depth for recursive nodes.
-    pub depth: Option<i64>,
+    pub(crate) depth: Option<i64>,
     /// Target Zod version.
-    pub zod_version: ZodVersion,
+    pub(crate) zod_version: ZodVersion,
     /// Optional override hook, shared across frames.
-    pub parser_override: Rc<Option<ParserOverride>>,
+    pub(crate) parser_override: Rc<Option<ParserOverride>>,
     /// Storage for schemas built during the walk. Interning a constructed
-    /// schema here gives it a stable, never-reused address so cycle detection
-    /// and memoization see distinct identities, the same way distinct JS
-    /// objects do. Shared across frames.
-    pub arena: Rc<RefCell<Vec<Box<Value>>>>,
+    /// schema keeps its `Rc` alive here for the whole walk, so its address
+    /// stays stable and is never reused. That gives each constructed schema a
+    /// distinct identity in the `seen` map, the same way distinct JS objects
+    /// do. Shared across frames.
+    pub(crate) arena: Rc<RefCell<Vec<Rc<Value>>>>,
 }
 
 impl Refs {
+    /// The breadcrumb of the node currently being parsed.
+    ///
+    /// A parser override reads this to branch on where the node sits in the
+    /// schema tree.
+    pub fn path(&self) -> &[PathSegment] {
+        &self.path
+    }
+
     /// Build refs from [`Options`], starting at an empty path with an empty
     /// seen map. The override hook moves out of `options`.
-    pub fn from_options(options: &mut Options) -> Self {
+    pub(crate) fn from_options(options: &mut Options) -> Self {
         Refs {
             path: Vec::new(),
             seen: Rc::new(RefCell::new(HashMap::new())),
@@ -139,7 +270,7 @@ impl Refs {
 
     /// Default refs for a direct parser call: empty path, empty seen map, v4,
     /// no options set. An absent version selects the v4 branch.
-    pub fn default_v4() -> Self {
+    pub(crate) fn default_v4() -> Self {
         Refs {
             path: Vec::new(),
             seen: Rc::new(RefCell::new(HashMap::new())),
@@ -153,29 +284,20 @@ impl Refs {
         }
     }
 
-    /// Intern a constructed schema and return a reference with a stable address.
+    /// Intern a constructed schema and return an owned handle to it.
     ///
-    /// The arena owns the box for the rest of the walk, so the address never
-    /// moves and is never reused. That gives each constructed schema a distinct
-    /// identity in the `seen` map, matching JS object identity.
-    ///
-    /// # Safety
-    ///
-    /// The returned reference borrows the boxed value. The box lives in the
-    /// arena, which lives as long as any `Refs` clone, which outlives the walk
-    /// that uses the reference. The arena only ever pushes, never removes or
-    /// reorders, so the box address stays valid.
-    #[allow(unsafe_code)]
-    pub fn intern(&self, value: Value) -> &Value {
-        let boxed = Box::new(value);
-        let ptr: *const Value = &*boxed;
-        self.arena.borrow_mut().push(boxed);
-        // SAFETY: see the doc comment above. The pointee outlives this borrow.
-        unsafe { &*ptr }
+    /// The arena keeps a clone of the returned `Rc` for the rest of the walk,
+    /// so the value stays put and its address is never reused. Pass `&*handle`
+    /// to the dispatcher to give the node a distinct identity in the `seen`
+    /// map, matching JS object identity.
+    pub(crate) fn intern(&self, value: Value) -> Rc<Value> {
+        let node = Rc::new(value);
+        self.arena.borrow_mut().push(Rc::clone(&node));
+        node
     }
 
     /// Clone this `Refs` with a new path. Shared state stays shared.
-    pub fn with_path(&self, path: Vec<PathSegment>) -> Refs {
+    pub(crate) fn with_path(&self, path: Vec<PathSegment>) -> Refs {
         let mut next = self.clone();
         next.path = path;
         next
@@ -183,7 +305,7 @@ impl Refs {
 
     /// Clone this `Refs` with a new path and `without_defaults` forced on.
     /// Used by the multiple-type parser so per-branch defaults are dropped.
-    pub fn with_path_without_defaults(&self, path: Vec<PathSegment>) -> Refs {
+    pub(crate) fn with_path_without_defaults(&self, path: Vec<PathSegment>) -> Refs {
         let mut next = self.clone();
         next.path = path;
         next.without_defaults = true;
@@ -191,7 +313,7 @@ impl Refs {
     }
 
     /// Append segments to the current path and return the extended vector.
-    pub fn push_path(&self, segments: &[PathSegment]) -> Vec<PathSegment> {
+    pub(crate) fn push_path(&self, segments: &[PathSegment]) -> Vec<PathSegment> {
         let mut p = self.path.clone();
         p.extend_from_slice(segments);
         p

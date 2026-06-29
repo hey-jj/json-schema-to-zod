@@ -15,10 +15,12 @@
 //! use json_schema_to_zod::{json_schema_to_zod, Module, Options};
 //! use serde_json::json;
 //!
-//! let mut opts = Options::default();
-//! opts.module = Some(Module::Esm);
-//! let code = json_schema_to_zod(&json!({ "type": "string" }), opts).unwrap();
+//! # fn main() -> Result<(), json_schema_to_zod::Error> {
+//! let opts = Options::default().module(Module::Esm);
+//! let code = json_schema_to_zod(&json!({ "type": "string" }), opts)?;
 //! assert_eq!(code, "import { z } from \"zod\"\n\nexport default z.string()\n");
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Zod versions
@@ -39,24 +41,11 @@ mod util;
 
 use serde_json::Value;
 
-pub use jsdocs::{add_jsdocs, expand_jsdocs};
-pub use parsers::{
-    parse_all_of, parse_any_of, parse_array, parse_boolean, parse_const, parse_default, parse_enum,
-    parse_if_then_else, parse_multiple_type, parse_not, parse_nullable, parse_number, parse_object,
-    parse_one_of, parse_simple_discriminated_one_of, parse_string,
-};
-pub use predicates::is_simple_discriminated_one_of;
-pub use types::{Module, Options, ParserOverride, PathSegment, Refs, Seen, TypeExport, ZodVersion};
-pub use util::{half, json_stringify, json_stringify_str, omit, with_message, Builder};
+use jsdocs::expand_jsdocs;
 
-/// Parse a schema node with the given refs.
-///
-/// Most callers want [`json_schema_to_zod`]. Use this to drive the dispatcher
-/// directly or to inspect a fragment without module wrapping. Build refs with
-/// [`Refs::default_v4`] for a fresh v4 walk.
-pub fn parse_schema(schema: &Value, refs: &Refs) -> String {
-    parse_schema::parse_schema(schema, refs, false)
-}
+pub use types::{
+    Error, Module, Options, ParserOverride, PathSegment, Refs, TypeExport, ZodVersion,
+};
 
 /// Generate Zod source code from a JSON Schema value.
 ///
@@ -71,7 +60,7 @@ pub fn parse_schema(schema: &Value, refs: &Refs) -> String {
 ///   `module.exports`.
 /// - [`Module::None`] or absent yields a bare expression, or `const <name> =`
 ///   when a name is set.
-pub fn json_schema_to_zod(schema: &Value, mut options: Options) -> Result<String, String> {
+pub fn json_schema_to_zod(schema: &Value, mut options: Options) -> Result<String, Error> {
     let module = options.module;
     let name = options.name.take();
     let type_export = options.type_export.take();
@@ -79,7 +68,7 @@ pub fn json_schema_to_zod(schema: &Value, mut options: Options) -> Result<String
     let with_jsdocs = options.with_jsdocs;
 
     if type_export.is_some() && (name.is_none() || module != Some(Module::Esm)) {
-        return Err("Option `type` requires `name` to be set and `module` to be `esm`".to_string());
+        return Err(Error::TypeExportRequiresNameAndEsm);
     }
 
     let refs = Refs::from_options(&mut options);
@@ -99,7 +88,7 @@ pub fn json_schema_to_zod(schema: &Value, mut options: Options) -> Result<String
     match module {
         Some(Module::Cjs) => {
             let body = match &name {
-                Some(n) => format!("{{ {}: {} }}", util::json_stringify_str(n), result),
+                Some(n) => format!("{{ {}: {} }}", util::json_string_literal(n), result),
                 None => result.clone(),
             };
             result = format!("{jsdocs}module.exports = {body}\n");
