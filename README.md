@@ -19,14 +19,13 @@ json-schema-to-zod = "0.1"
 use json_schema_to_zod::{json_schema_to_zod, Module, Options};
 use serde_json::json;
 
-let mut opts = Options::default();
-opts.module = Some(Module::Esm);
-
-let code = json_schema_to_zod(&json!({ "type": "string" }), opts).unwrap();
+let opts = Options::default().module(Module::Esm);
+let code = json_schema_to_zod(&json!({ "type": "string" }), opts)?;
 assert_eq!(code, "import { z } from \"zod\"\n\nexport default z.string()\n");
 ```
 
-Pass a bare expression by leaving `module` unset:
+Chain setters on `Options::default()` to configure the output. Leave `module`
+unset for a bare expression:
 
 ```rust
 use json_schema_to_zod::{json_schema_to_zod, Options};
@@ -35,8 +34,7 @@ use serde_json::json;
 let code = json_schema_to_zod(
     &json!({ "type": "object", "properties": { "id": { "type": "integer" } } }),
     Options::default(),
-)
-.unwrap();
+)?;
 assert_eq!(code, "z.object({ \"id\": z.number().int().optional() })");
 ```
 

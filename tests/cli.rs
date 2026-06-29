@@ -112,6 +112,30 @@ fn missing_depth_value_error() {
 }
 
 #[test]
+fn depth_nan_is_rejected() {
+    // JS `Number("nan")` is NaN, so the CLI rejects it.
+    let (_, stderr) = run(&["-i", &fixture(), "-d", "nan"], None);
+    assert!(
+        stderr.contains("Value of argument depth must be a valid number"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn depth_hex_is_accepted() {
+    // JS `Number("0x10")` is 16, a valid depth.
+    let (_, stderr) = run(&["-i", &fixture(), "-d", "0x10"], None);
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
+fn depth_infinity_is_accepted() {
+    // JS `Number("Infinity")` is Infinity, which means unbounded depth.
+    let (_, stderr) = run(&["-i", &fixture(), "-d", "Infinity"], None);
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+}
+
+#[test]
 fn bad_module_error() {
     let (_, stderr) = run(&["-i", &fixture(), "-m", "notAModule"], None);
     assert!(

@@ -4,10 +4,7 @@ use json_schema_to_zod::{
 use serde_json::json;
 
 fn esm() -> Options {
-    Options {
-        module: Some(Module::Esm),
-        ..Default::default()
-    }
+    Options::default().module(Module::Esm)
 }
 
 #[test]
@@ -29,11 +26,7 @@ fn simple_esm() {
 
 #[test]
 fn skip_import_line() {
-    let opts = Options {
-        module: Some(Module::Esm),
-        no_import: true,
-        ..Default::default()
-    };
+    let opts = Options::default().module(Module::Esm).no_import(true);
     assert_eq!(
         json_schema_to_zod(&json!({ "type": "string" }), opts).unwrap(),
         "export default z.string()\n"
@@ -42,12 +35,10 @@ fn skip_import_line() {
 
 #[test]
 fn add_type_capitalized() {
-    let opts = Options {
-        name: Some("mySchema".into()),
-        module: Some(Module::Esm),
-        type_export: Some(TypeExport::Flag),
-        ..Default::default()
-    };
+    let opts = Options::default()
+        .name("mySchema")
+        .module(Module::Esm)
+        .type_export(TypeExport::Flag);
     assert_eq!(
         json_schema_to_zod(&json!({ "type": "string" }), opts).unwrap(),
         "import { z } from \"zod\"\n\nexport const mySchema = z.string()\nexport type MySchema = z.infer<typeof mySchema>\n"
@@ -56,12 +47,10 @@ fn add_type_capitalized() {
 
 #[test]
 fn add_type_custom_name() {
-    let opts = Options {
-        name: Some("mySchema".into()),
-        module: Some(Module::Esm),
-        type_export: Some(TypeExport::Named("MyType".into())),
-        ..Default::default()
-    };
+    let opts = Options::default()
+        .name("mySchema")
+        .module(Module::Esm)
+        .type_export(TypeExport::Named("MyType".into()));
     assert_eq!(
         json_schema_to_zod(&json!({ "type": "string" }), opts).unwrap(),
         "import { z } from \"zod\"\n\nexport const mySchema = z.string()\nexport type MyType = z.infer<typeof mySchema>\n"
@@ -70,22 +59,18 @@ fn add_type_custom_name() {
 
 #[test]
 fn throws_when_cjs_and_type() {
-    let opts = Options {
-        name: Some("hello".into()),
-        module: Some(Module::Cjs),
-        type_export: Some(TypeExport::Flag),
-        ..Default::default()
-    };
+    let opts = Options::default()
+        .name("hello")
+        .module(Module::Cjs)
+        .type_export(TypeExport::Flag);
     assert!(json_schema_to_zod(&json!({ "type": "string" }), opts).is_err());
 }
 
 #[test]
 fn throws_when_type_but_no_name() {
-    let opts = Options {
-        module: Some(Module::Esm),
-        type_export: Some(TypeExport::Flag),
-        ..Default::default()
-    };
+    let opts = Options::default()
+        .module(Module::Esm)
+        .type_export(TypeExport::Flag);
     assert!(json_schema_to_zod(&json!({ "type": "string" }), opts).is_err());
 }
 
@@ -115,11 +100,9 @@ fn includes_falsy_const() {
 
 #[test]
 fn can_exclude_defaults() {
-    let opts = Options {
-        module: Some(Module::Esm),
-        without_defaults: true,
-        ..Default::default()
-    };
+    let opts = Options::default()
+        .module(Module::Esm)
+        .without_defaults(true);
     assert_eq!(
         json_schema_to_zod(&json!({ "type": "string", "default": "foo" }), opts).unwrap(),
         "import { z } from \"zod\"\n\nexport default z.string()\n"
@@ -136,11 +119,9 @@ fn includes_describes() {
 
 #[test]
 fn can_exclude_describes() {
-    let opts = Options {
-        module: Some(Module::Esm),
-        without_describes: true,
-        ..Default::default()
-    };
+    let opts = Options::default()
+        .module(Module::Esm)
+        .without_describes(true);
     assert_eq!(
         json_schema_to_zod(&json!({ "type": "string", "description": "foo" }), opts).unwrap(),
         "import { z } from \"zod\"\n\nexport default z.string()\n"
@@ -164,11 +145,7 @@ fn includes_jsdocs() {
             }
         }
     });
-    let opts = Options {
-        module: Some(Module::Esm),
-        with_jsdocs: true,
-        ..Default::default()
-    };
+    let opts = Options::default().module(Module::Esm).with_jsdocs(true);
     let expected = "import { z } from \"zod\"\n\n/**Description for schema*/\nexport default z.object({ \n/**Description for prop*/\n\"prop\": z.string().describe(\"Description for prop\").optional(), \n/**\n* Description for object that is multiline\n* More content\n* \n* And whitespace\n*/\n\"obj\": z.object({ \n/**Description for nestedProp*/\n\"nestedProp\": z.string().describe(\"Description for nestedProp\").optional(), \n/**Description for nestedProp2*/\n\"nestedProp2\": z.string().describe(\"Description for nestedProp2\").optional() }).describe(\"Description for object that is multiline\\nMore content\\n\\nAnd whitespace\").optional() }).describe(\"Description for schema\")\n";
     assert_eq!(json_schema_to_zod(&schema, opts).unwrap(), expected);
 }
@@ -207,21 +184,19 @@ fn ignores_undefined_default() {
 
 #[test]
 fn custom_parser_override() {
-    let opts = Options {
-        parser_override: Some(Box::new(|schema, refs| {
-            if refs.path.len() == 2
-                && refs.path[0] == PathSegment::Key("allOf".into())
-                && refs.path[1] == PathSegment::Index(2)
-                && schema.get("type").and_then(|t| t.as_str()) == Some("boolean")
-                && schema.get("description").and_then(|d| d.as_str()) == Some("foo")
-            {
-                Some("myCustomZodSchema".to_string())
-            } else {
-                None
-            }
-        })),
-        ..Default::default()
-    };
+    let opts = Options::default().parser_override(Box::new(|schema, refs| {
+        let path = refs.path();
+        if path.len() == 2
+            && path[0] == PathSegment::Key("allOf".into())
+            && path[1] == PathSegment::Index(2)
+            && schema.get("type").and_then(|t| t.as_str()) == Some("boolean")
+            && schema.get("description").and_then(|d| d.as_str()) == Some("foo")
+        {
+            Some("myCustomZodSchema".to_string())
+        } else {
+            None
+        }
+    }));
     assert_eq!(
         json_schema_to_zod(
             &json!({
@@ -240,11 +215,7 @@ fn custom_parser_override() {
 
 #[test]
 fn cjs_with_name() {
-    let opts = Options {
-        module: Some(Module::Cjs),
-        name: Some("someName".into()),
-        ..Default::default()
-    };
+    let opts = Options::default().module(Module::Cjs).name("someName");
     assert_eq!(
         json_schema_to_zod(&json!({ "type": "string" }), opts).unwrap(),
         "const { z } = require(\"zod\")\n\nmodule.exports = { \"someName\": z.string() }\n"
@@ -253,10 +224,7 @@ fn cjs_with_name() {
 
 #[test]
 fn cjs_without_name() {
-    let opts = Options {
-        module: Some(Module::Cjs),
-        ..Default::default()
-    };
+    let opts = Options::default().module(Module::Cjs);
     assert_eq!(
         json_schema_to_zod(&json!({ "type": "string" }), opts).unwrap(),
         "const { z } = require(\"zod\")\n\nmodule.exports = z.string()\n"
@@ -265,10 +233,7 @@ fn cjs_without_name() {
 
 #[test]
 fn name_only_no_module() {
-    let opts = Options {
-        name: Some("someName".into()),
-        ..Default::default()
-    };
+    let opts = Options::default().name("someName");
     assert_eq!(
         json_schema_to_zod(&json!({ "type": "string" }), opts).unwrap(),
         "const someName = z.string()"
@@ -285,13 +250,32 @@ fn boolean_schema_any() {
 
 #[test]
 fn v3_record_syntax() {
-    let opts = Options {
-        module: Some(Module::Esm),
-        zod_version: ZodVersion::V3,
-        ..Default::default()
-    };
+    let opts = Options::default()
+        .module(Module::Esm)
+        .zod_version(ZodVersion::V3);
     assert_eq!(
         json_schema_to_zod(&json!({ "type": "object" }), opts).unwrap(),
         "import { z } from \"zod\"\n\nexport default z.record(z.any())\n"
+    );
+}
+
+#[test]
+fn cjs_with_jsdocs_prepends_block_twice() {
+    // With cjs, the jsdoc block prefixes both the require line and the
+    // module.exports line.
+    let opts = Options::default().module(Module::Cjs).with_jsdocs(true);
+    assert_eq!(
+        json_schema_to_zod(&json!({ "type": "string", "description": "Hello" }), opts).unwrap(),
+        "/**Hello*/\nconst { z } = require(\"zod\")\n\n/**Hello*/\nmodule.exports = z.string().describe(\"Hello\")\n"
+    );
+}
+
+#[test]
+fn esm_with_jsdocs_prepends_block_once() {
+    // With esm, the import line carries no jsdoc, so the block appears once.
+    let opts = Options::default().module(Module::Esm).with_jsdocs(true);
+    assert_eq!(
+        json_schema_to_zod(&json!({ "type": "string", "description": "Hello" }), opts).unwrap(),
+        "import { z } from \"zod\"\n\n/**Hello*/\nexport default z.string().describe(\"Hello\")\n"
     );
 }
