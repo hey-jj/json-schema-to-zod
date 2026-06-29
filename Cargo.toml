@@ -1,0 +1,10 @@
+[package]
+name = "json-schema-to-zod"
+version = "0.1.0"
+edition = "2021"
+description = "Generate Zod schema source code from JSON Schema"
+license = "MIT"
+repository = "https://github.com/hey-jj/json-schema-to-zod"
+readme = "README.md"
+
+[dependencies]
