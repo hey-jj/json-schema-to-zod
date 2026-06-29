@@ -1,0 +1,85 @@
+z.object({ "allOf": z.intersection(z.boolean(), z.intersection(z.number(), z.string())).optional(), "anyOf": z.union([z.boolean(), z.number(), z.string()]).optional(), "oneOf": z.any().superRefine((x, ctx) => {
+    const schemas = [z.boolean(), z.number(), z.string()];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).optional(), "array": z.array(z.string()).min(2).max(3).optional(), "tuple": z.tuple([z.boolean(),z.number(),z.string()]).optional(), "const": z.literal("xbox").optional(), "enum": z.enum(["ps4","ps5"]).optional(), "ifThenElse": z.union([z.literal("x"), z.union([z.literal(1), z.literal(2), z.literal(3)])]).superRefine((value,ctx) => {
+  const result = z.string().safeParse(value).success
+    ? z.literal("x").safeParse(value)
+    : z.union([z.literal(1), z.literal(2), z.literal(3)]).safeParse(value);
+  if (!result.success) {
+    result.error.errors.forEach((error) => ctx.addIssue(error))
+  }
+}).optional(), "null": z.null().optional(), "multiple": z.union([z.array(z.any()), z.boolean()]).optional(), "objAdditionalTrue": z.object({ "x": z.string().optional() }).catchall(z.any()).optional(), "objAdditionalFalse": z.object({ "x": z.string().optional() }).strict().optional(), "objAdditionalNumber": z.object({ "x": z.string().optional() }).catchall(z.number()).optional(), "objAdditionalOnly": z.record(z.string(), z.number()).optional(), "patternProps": z.object({ "z": z.string().optional() }).catchall(z.union([z.string(), z.number(), z.never()])).superRefine((value, ctx) => {
+for (const key in value) {
+let evaluated = ["z"].includes(key)
+if (key.match(new RegExp("^x"))) {
+evaluated = true
+const result = z.string().safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: Key matching regex /${key}/ must match schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+if (key.match(new RegExp("^y"))) {
+evaluated = true
+const result = z.number().safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: Key matching regex /${key}/ must match schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+if (!evaluated) {
+const result = z.never().safeParse(value[key])
+if (!result.success) {
+ctx.addIssue({
+          path: [key],
+          code: 'custom',
+          message: `Invalid input: must match catchall schema`,
+          params: {
+            issues: result.error.issues
+          }
+        })
+}
+}
+}
+}).optional() })
