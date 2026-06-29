@@ -12,8 +12,10 @@ use std::process::exit;
 use json_schema_to_zod::{json_schema_to_zod, Module, Options, TypeExport, ZodVersion};
 use serde_json::Value;
 
-/// A CLI parameter definition.
+/// A CLI parameter definition. The `name` lives on the param so the list keeps
+/// its source order and stays the single place a parameter is declared.
 struct Param {
+    name: &'static str,
     shorthand: &'static str,
     value: ParamValue,
     required: Required,
@@ -41,12 +43,13 @@ enum Parsed {
     Number(i64),
 }
 
-fn params() -> BTreeMap<&'static str, Param> {
+/// The parameter list in declaration order. Parsing and help both walk this in
+/// order, so a parameter is declared once and order needs no second list.
+fn params() -> Vec<Param> {
     let stdin_is_tty = atty_stdin();
-    let mut m = BTreeMap::new();
-    m.insert(
-        "input",
+    vec![
         Param {
+            name: "input",
             shorthand: "i",
             value: ParamValue::Str,
             required: if stdin_is_tty {
@@ -56,95 +59,65 @@ fn params() -> BTreeMap<&'static str, Param> {
             },
             description: "JSON or a source file path. Required if no data is piped.",
         },
-    );
-    m.insert(
-        "output",
         Param {
+            name: "output",
             shorthand: "o",
             value: ParamValue::Str,
             required: Required::No,
             description: "A file path to write to. If not supplied stdout will be used.",
         },
-    );
-    m.insert(
-        "name",
         Param {
+            name: "name",
             shorthand: "n",
             value: ParamValue::Str,
             required: Required::No,
             description: "The name of the schema in the output.",
         },
-    );
-    m.insert(
-        "depth",
         Param {
+            name: "depth",
             shorthand: "d",
             value: ParamValue::Number,
             required: Required::No,
             description:
                 "Maximum depth of recursion before falling back to z.any(). Defaults to 0.",
         },
-    );
-    m.insert(
-        "module",
         Param {
+            name: "module",
             shorthand: "m",
             value: ParamValue::Enum(&["esm", "cjs", "none"]),
             required: Required::No,
             description: "Module syntax; 'esm', 'cjs' or 'none'. Defaults to 'esm'.",
         },
-    );
-    m.insert(
-        "type",
         Param {
+            name: "type",
             shorthand: "t",
             value: ParamValue::Str,
             required: Required::No,
             description: "The name of the (optional) inferred type export.",
         },
-    );
-    m.insert(
-        "noImport",
         Param {
+            name: "noImport",
             shorthand: "ni",
             value: ParamValue::Flag,
             required: Required::No,
             description: "Removes the `import { z } from 'zod';` or equivalent from the output.",
         },
-    );
-    m.insert(
-        "withJsdocs",
         Param {
+            name: "withJsdocs",
             shorthand: "wj",
             value: ParamValue::Flag,
             required: Required::No,
             description: "Generate jsdocs off of the description property.",
         },
-    );
-    m.insert(
-        "zodVersion",
         Param {
+            name: "zodVersion",
             shorthand: "zv",
             value: ParamValue::Number,
             required: Required::No,
             description: "Target Zod version: 3 or 4. Defaults to 4.",
         },
-    );
-    m
+    ]
 }
-
-/// Order parameters for help output and required checks, matching the source.
-const ORDER: [&str; 9] = [
-    "input",
-    "output",
-    "name",
-    "depth",
-    "module",
-    "type",
-    "noImport",
-    "withJsdocs",
-    "zodVersion",
-];
 
 fn atty_stdin() -> bool {
     // Match `process.stdin.isTTY`. When stdin is a terminal there is no piped
@@ -191,24 +164,22 @@ fn run() -> Result<(), String> {
         _ => Module::Esm,
     };
 
-    let mut options = Options {
-        module: Some(module),
-        no_import: matches!(parsed.get("noImport"), Some(Parsed::Flag(true))),
-        with_jsdocs: matches!(parsed.get("withJsdocs"), Some(Parsed::Flag(true))),
-        zod_version,
-        ..Default::default()
-    };
+    let mut options = Options::default()
+        .module(module)
+        .no_import(matches!(parsed.get("noImport"), Some(Parsed::Flag(true))))
+        .with_jsdocs(matches!(parsed.get("withJsdocs"), Some(Parsed::Flag(true))))
+        .zod_version(zod_version);
     if let Some(Parsed::Str(n)) = parsed.get("name") {
-        options.name = Some(n.clone());
+        options = options.name(n.clone());
     }
     if let Some(Parsed::Number(d)) = parsed.get("depth") {
-        options.depth = Some(*d);
+        options = options.depth(*d);
     }
     if let Some(Parsed::Str(t)) = parsed.get("type") {
-        options.type_export = Some(TypeExport::Named(t.clone()));
+        options = options.type_export(TypeExport::Named(t.clone()));
     }
 
-    let zod_schema = json_schema_to_zod(&json_schema, options)?;
+    let zod_schema = json_schema_to_zod(&json_schema, options).map_err(|e| e.to_string())?;
 
     if let Some(Parsed::Str(out)) = parsed.get("output") {
         if let Some(dir) = Path::new(out).parent() {
@@ -224,14 +195,11 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-fn parse_args(
-    defs: &BTreeMap<&'static str, Param>,
-    argv: &[String],
-) -> Result<BTreeMap<&'static str, Parsed>, String> {
+fn parse_args(defs: &[Param], argv: &[String]) -> Result<BTreeMap<&'static str, Parsed>, String> {
     let mut result = BTreeMap::new();
 
-    for name in ORDER {
-        let param = &defs[name];
+    for param in defs {
+        let name = param.name;
         let long = format!("--{name}");
         let short = format!("-{}", param.shorthand);
         let index = argv.iter().position(|a| *a == long || *a == short);
@@ -282,14 +250,61 @@ fn parse_args(
     Ok(result)
 }
 
-/// Parse a value the way JS `Number()` does for the inputs the CLI sees.
-/// Returns `None` for `NaN`-producing inputs.
+/// Parse a value the way JS `Number()` does, then reject the `NaN` cases the
+/// CLI treats as an error.
+///
+/// `Number("")` is 0. `Infinity`, `+Infinity`, and `-Infinity` parse to the
+/// infinities. `0x`, `0o`, and `0b` prefixes parse the rest as an unsigned
+/// integer in that base. Everything else goes through the decimal parser.
+/// `nan`, `inf`, and any other non-numeric text return `None`, which the caller
+/// reports as `Value of argument ... must be a valid number`.
 fn parse_js_number(s: &str) -> Option<f64> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
         return Some(0.0);
     }
-    trimmed.parse::<f64>().ok()
+
+    match trimmed {
+        "Infinity" | "+Infinity" => return Some(f64::INFINITY),
+        "-Infinity" => return Some(f64::NEG_INFINITY),
+        _ => {}
+    }
+
+    if let Some(rest) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        return u128::from_str_radix(rest, 16).ok().map(|n| n as f64);
+    }
+    if let Some(rest) = trimmed
+        .strip_prefix("0o")
+        .or_else(|| trimmed.strip_prefix("0O"))
+    {
+        return u128::from_str_radix(rest, 8).ok().map(|n| n as f64);
+    }
+    if let Some(rest) = trimmed
+        .strip_prefix("0b")
+        .or_else(|| trimmed.strip_prefix("0B"))
+    {
+        return u128::from_str_radix(rest, 2).ok().map(|n| n as f64);
+    }
+
+    // Rust's `f64` parser accepts `nan`, `inf`, and `infinity`, which JS
+    // `Number()` rejects. The Infinity forms are handled above, so reject any
+    // remaining input carrying a non-exponent letter.
+    if trimmed
+        .bytes()
+        .any(|b| b.is_ascii_alphabetic() && b != b'e' && b != b'E')
+    {
+        return None;
+    }
+
+    let parsed = trimmed.parse::<f64>().ok()?;
+    if parsed.is_nan() {
+        None
+    } else {
+        Some(parsed)
+    }
 }
 
 fn parse_or_read_json(json_or_path: &str) -> Result<Value, String> {
@@ -308,10 +323,10 @@ fn read_pipe() -> String {
     buf
 }
 
-fn print_help(defs: &BTreeMap<&'static str, Param>) {
-    let longest = ORDER
+fn print_help(defs: &[Param]) {
+    let longest = defs
         .iter()
-        .map(|n| n.len())
+        .map(|p| p.name.len())
         .chain(std::iter::once(5))
         .max()
         .unwrap_or(5);
@@ -319,8 +334,8 @@ fn print_help(defs: &BTreeMap<&'static str, Param>) {
     let header = format!("Name {}Short Description", " ".repeat(longest - 2));
     println!("{header}");
 
-    for name in ORDER {
-        let param = &defs[name];
+    for param in defs {
+        let name = param.name;
         let short = format!(" -{}", param.shorthand);
         let description = format!("    {}", param.description);
         println!(
