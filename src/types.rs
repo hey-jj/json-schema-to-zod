@@ -138,8 +138,7 @@ impl Refs {
     }
 
     /// Default refs for a direct parser call: empty path, empty seen map, v4,
-    /// no options set. Matches the upstream `{ seen: new Map(), path: [] }`
-    /// default where `zodVersion` is absent and the v4 branch is taken.
+    /// no options set. An absent version selects the v4 branch.
     pub fn default_v4() -> Self {
         Refs {
             path: Vec::new(),

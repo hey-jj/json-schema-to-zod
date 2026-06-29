@@ -1,8 +1,7 @@
 //! Command line wrapper around the library.
 //!
 //! Reads a JSON Schema from a file, an argument, or stdin and prints Zod source
-//! code. Mirrors the argument parsing and defaults of the original tool: module
-//! defaults to ESM, and only `--zodVersion 3` selects v3.
+//! code. The module defaults to ESM, and only `--zodVersion 3` selects v3.
 
 use std::collections::BTreeMap;
 use std::fs;

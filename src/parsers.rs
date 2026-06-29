@@ -54,8 +54,8 @@ pub fn parse_enum(schema: &Value) -> String {
         return format!("z.literal({})", json_stringify(&values[0]));
     }
     if values.iter().all(|x| x.is_string()) {
-        // The string branch joins map output with a comma and no space, since
-        // upstream interpolates an array into a template literal without join.
+        // The string branch joins with a comma and no space. This matches the
+        // bare array-to-string coercion the contract locks in.
         let joined = values
             .iter()
             .map(json_stringify)
@@ -364,8 +364,8 @@ pub fn parse_number(schema: &Value) -> String {
 /// modifiers.
 pub fn parse_array(schema: &Value, refs: &Refs) -> String {
     if let Some(items) = schema.get("items").and_then(|i| i.as_array()) {
-        // Tuple. Items join with a comma and no space, matching the upstream
-        // array interpolation without join.
+        // Tuple. Items join with a comma and no space, the same bare
+        // array-to-string coercion the contract locks in.
         let parts = items
             .iter()
             .enumerate()
@@ -733,7 +733,7 @@ pub fn parse_if_then_else(schema: &Value, refs: &Refs) -> String {
 }
 
 /// Coerce a combinator member that bears object keywords but no `type` into an
-/// object schema, matching the upstream injection of `type: "object"`.
+/// object schema by injecting `type: "object"`.
 fn coerce_object_member(x: &Value) -> Value {
     if let Value::Object(map) = x {
         let no_type = !map.contains_key("type");
@@ -865,7 +865,7 @@ fn map_combinator(schema: &Value, combinator: &str) -> Value {
 }
 
 /// Select the base expression from properties, patternProperties, and
-/// additionalProperties following the upstream precedence.
+/// additionalProperties by precedence.
 fn build_base(
     properties: &Option<String>,
     pattern_properties: &Option<String>,
