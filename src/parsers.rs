@@ -657,7 +657,10 @@ pub fn parse_simple_discriminated_one_of(schema: &Value, refs: &Refs) -> String 
         })
         .collect::<Vec<_>>()
         .join(", ");
-    format!("z.discriminatedUnion(\"{prop}\", [{parts}])")
+    format!(
+        "z.discriminatedUnion({}, [{parts}])",
+        json_string_literal(prop)
+    )
 }
 
 /// Lower a generic `oneOf` to a `z.any().superRefine(...)` that passes when
@@ -2486,6 +2489,32 @@ ctx.addIssue({
                     &refs_v4()
                 ),
                 r#"z.discriminatedUnion("kind", [z.object({ "kind": z.literal("person"), "name": z.string() }), z.object({ "kind": z.literal("company"), "companyName": z.string() })])"#
+            );
+        }
+
+        #[test]
+        fn property_name_is_json_escaped() {
+            // A propertyName with a quote must be escaped, not interpolated raw.
+            assert_eq!(
+                parse_simple_discriminated_one_of(
+                    &json!({
+                        "discriminator": { "propertyName": "a\"b" },
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": { "x": { "type": "string", "enum": ["typeA"] } },
+                                "required": ["x"]
+                            },
+                            {
+                                "type": "object",
+                                "properties": { "x": { "type": "string", "enum": ["typeB"] } },
+                                "required": ["x"]
+                            }
+                        ]
+                    }),
+                    &refs_v4()
+                ),
+                r#"z.discriminatedUnion("a\"b", [z.object({ "x": z.literal("typeA") }), z.object({ "x": z.literal("typeB") })])"#
             );
         }
 
