@@ -766,7 +766,7 @@ pub fn parse_if_then_else(schema: &Value, refs: &Refs) -> String {
     ? {s_then}.safeParse(value)
     : {s_else}.safeParse(value);
   if (!result.success) {{
-    result.error.errors.forEach((error) => ctx.addIssue(error))
+    result.error.issues.forEach((error) => ctx.addIssue(error))
   }}
 }})"#
     )
