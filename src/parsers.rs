@@ -16,6 +16,23 @@ fn idx(i: usize) -> PathSegment {
     PathSegment::Index(i)
 }
 
+const JSON_EQUAL_SOURCE: &str = r#"const jsonEqual = (a, b) => Object.is(a, b) || (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, i) => jsonEqual(item, b[i]))) || (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b) && Object.keys(a).length === Object.keys(b).length && Object.keys(a).every((key) => Object.prototype.hasOwnProperty.call(b, key) && jsonEqual(a[key], b[key])));"#;
+
+fn needs_structural_equality(value: &Value) -> bool {
+    value.is_array() || value.is_object()
+}
+
+fn parse_value_matcher(value: &Value) -> String {
+    if needs_structural_equality(value) {
+        format!(
+            "z.any().refine((value) => {{ {JSON_EQUAL_SOURCE} return jsonEqual(value, {}); }})",
+            compact_json(value)
+        )
+    } else {
+        format!("z.literal({})", compact_json(value))
+    }
+}
+
 /// `z.boolean()`. Ignores the schema body.
 pub fn parse_boolean() -> String {
     "z.boolean()".to_string()
@@ -34,7 +51,7 @@ pub fn parse_default() -> String {
 /// `z.literal(<json>)` from the `const` value.
 pub fn parse_const(schema: &Value) -> String {
     let c = schema.get("const").unwrap_or(&Value::Null);
-    format!("z.literal({})", compact_json(c))
+    parse_value_matcher(c)
 }
 
 /// Lower an `enum` to a literal, a string enum, or a union of literals.
@@ -51,7 +68,7 @@ pub fn parse_enum(schema: &Value) -> String {
         return "z.never()".to_string();
     }
     if values.len() == 1 {
-        return format!("z.literal({})", compact_json(&values[0]));
+        return parse_value_matcher(&values[0]);
     }
     if values.iter().all(|x| x.is_string()) {
         // The string branch joins with a comma and no space. This matches the
@@ -65,7 +82,7 @@ pub fn parse_enum(schema: &Value) -> String {
     }
     let joined = values
         .iter()
-        .map(|x| format!("z.literal({})", compact_json(x)))
+        .map(parse_value_matcher)
         .collect::<Vec<_>>()
         .join(", ");
     format!("z.union([{joined}])")
@@ -73,7 +90,12 @@ pub fn parse_enum(schema: &Value) -> String {
 
 /// Build `z.string()` and append format, pattern, length, and content
 /// modifiers in a fixed order.
+#[cfg(test)]
 pub fn parse_string(schema: &Value) -> String {
+    parse_string_with_refs(schema, &Refs::default_v4())
+}
+
+pub(crate) fn parse_string_with_refs(schema: &Value, refs: &Refs) -> String {
     let mut r = String::from("z.string()");
 
     r.push_str(&with_message(
@@ -212,8 +234,8 @@ pub fn parse_string(schema: &Value) -> String {
                 // JS guards with `value instanceof Object`, which is true for
                 // arrays as well as plain objects. Match both.
                 if value.is_object() || value.is_array() {
-                    // Parsed with fresh refs, independent of the parent walk.
-                    let inner = parse_schema(value, &Refs::default_v4(), false);
+                    let child = refs.with_path(refs.push_path(&[key("contentSchema")]));
+                    let inner = parse_schema(value, &child, false);
                     Some(MessageSlot::WithMessage {
                         open: format!(".pipe({inner}"),
                         prefix: ", ".into(),
@@ -455,7 +477,7 @@ pub fn parse_array(schema: &Value, refs: &Refs) -> String {
             "uniqueItems",
             |_v, _json| {
                 Some(MessageSlot::WithMessage {
-                    open: ".refine((arr) => arr.every((item, i) => arr.indexOf(item) == i)".into(),
+                    open: format!(".refine((arr) => {{ {JSON_EQUAL_SOURCE} return arr.every((item, i) => arr.slice(0, i).every((other) => !jsonEqual(item, other))); }}"),
                     prefix: ", ".into(),
                     close: ")".into(),
                 })
@@ -747,6 +769,20 @@ pub fn parse_one_of(schema: &Value, refs: &Refs) -> String {
 
 /// Lower `if`/`then`/`else` to a union refined by the condition.
 pub fn parse_if_then_else(schema: &Value, refs: &Refs) -> String {
+    let (s_if, s_then, s_else) = parse_if_then_else_parts(schema, refs);
+
+    format!(
+        r#"z.union([{s_then}, {s_else}]){}"#,
+        if_then_else_refinement(&s_if, &s_then, &s_else)
+    )
+}
+
+pub(crate) fn append_if_then_else(base: String, schema: &Value, refs: &Refs) -> String {
+    let (s_if, s_then, s_else) = parse_if_then_else_parts(schema, refs);
+    format!("{base}{}", if_then_else_refinement(&s_if, &s_then, &s_else))
+}
+
+fn parse_if_then_else_parts(schema: &Value, refs: &Refs) -> (String, String, String) {
     let null = Value::Null;
     let if_schema = schema.get("if").unwrap_or(&null);
     let then_schema = schema.get("then").unwrap_or(&null);
@@ -760,8 +796,12 @@ pub fn parse_if_then_else(schema: &Value, refs: &Refs) -> String {
     let s_then = parse_schema(then_schema, &then_child, false);
     let s_else = parse_schema(else_schema, &else_child, false);
 
+    (s_if, s_then, s_else)
+}
+
+fn if_then_else_refinement(s_if: &str, s_then: &str, s_else: &str) -> String {
     format!(
-        r#"z.union([{s_then}, {s_else}]).superRefine((value,ctx) => {{
+        r#".superRefine((value,ctx) => {{
   const result = {s_if}.safeParse(value).success
     ? {s_then}.safeParse(value)
     : {s_else}.safeParse(value);
@@ -1082,6 +1122,15 @@ mod tests {
         fn empty_string_constant() {
             assert_eq!(parse_const(&json!({ "const": "" })), r#"z.literal("")"#);
         }
+
+        #[test]
+        fn object_constant_uses_structural_equality() {
+            let parsed = parse_const(&json!({ "const": { "a": 1 } }));
+
+            assert!(parsed.starts_with("z.any().refine("));
+            assert!(parsed.contains("jsonEqual"));
+            assert!(!parsed.contains("z.literal"));
+        }
     }
 
     mod parse_enum {
@@ -1115,6 +1164,16 @@ mod tests {
                 parse_enum(&json!({ "enum": ["someValue", 57] })),
                 r#"z.union([z.literal("someValue"), z.literal(57)])"#
             );
+        }
+
+        #[test]
+        fn mixed_enum_uses_structural_equality_for_object_member() {
+            let parsed = parse_enum(&json!({ "enum": ["someValue", { "a": 1 }] }));
+
+            assert!(parsed.starts_with("z.union(["));
+            assert!(parsed.contains(r#"z.literal("someValue")"#));
+            assert!(parsed.contains("jsonEqual"));
+            assert!(!parsed.contains(r#"z.literal({"a":1})"#));
         }
     }
 
@@ -1337,6 +1396,24 @@ mod tests {
         }
 
         #[test]
+        fn content_schema_uses_active_zod_version() {
+            let code = crate::json_schema_to_zod(
+                &json!({
+                    "type": "string",
+                    "contentMediaType": "application/json",
+                    "contentSchema": { "type": "object" }
+                }),
+                crate::Options::default().zod_version(ZodVersion::V3),
+            )
+            .unwrap();
+
+            assert_eq!(
+                code,
+                r#"z.string().transform((str, ctx) => { try { return JSON.parse(str); } catch (err) { ctx.addIssue({ code: "custom", message: "Invalid JSON" }); }}).pipe(z.record(z.any()))"#
+            );
+        }
+
+        #[test]
         fn combined_format_pattern_lengths_with_messages() {
             assert_eq!(
                 parse_string(&json!({
@@ -1411,13 +1488,26 @@ mod tests {
 
         #[test]
         fn unique_items() {
+            let expected = format!(
+                r#"z.array(z.string()).refine((arr) => {{ {JSON_EQUAL_SOURCE} return arr.every((item, i) => arr.slice(0, i).every((other) => !jsonEqual(item, other))); }}, "All items must be unique!")"#
+            );
             assert_eq!(
                 parse_array(
                     &json!({ "type": "array", "uniqueItems": true, "items": { "type": "string" } }),
                     &refs_v4()
                 ),
-                r#"z.array(z.string()).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!")"#
+                expected
             );
+        }
+
+        #[test]
+        fn unique_items_uses_structural_equality() {
+            let parsed = parse_array(&json!({ "type": "array", "uniqueItems": true }), &refs_v4());
+
+            assert!(parsed.contains("jsonEqual"));
+            assert!(parsed.contains("arr.slice(0, i)"));
+            assert!(parsed.contains(r#""All items must be unique!""#));
+            assert!(!parsed.contains("arr.indexOf(item) == i"));
         }
 
         #[test]

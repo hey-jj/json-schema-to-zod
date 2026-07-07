@@ -270,6 +270,7 @@ impl Refs {
 
     /// Default refs for a direct parser call: empty path, empty seen map, v4,
     /// no options set. An absent version selects the v4 branch.
+    #[cfg(test)]
     pub(crate) fn default_v4() -> Self {
         Refs {
             path: Vec::new(),

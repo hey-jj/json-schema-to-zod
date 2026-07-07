@@ -102,40 +102,49 @@ fn add_annotations(schema: &Value, mut parsed: String) -> String {
 
 /// Dispatch a schema object to the matching parser. First match wins.
 fn select_parser(schema: &Value, refs: &Refs) -> String {
-    if its::is_nullable(schema) {
-        parsers::parse_nullable(schema, refs)
+    let (parsed, can_append_conditional) = if its::is_nullable(schema) {
+        (parsers::parse_nullable(schema, refs), false)
     } else if its::is_object(schema) {
-        parsers::parse_object(schema, refs)
+        (parsers::parse_object(schema, refs), true)
     } else if its::is_array(schema) {
-        parsers::parse_array(schema, refs)
+        (parsers::parse_array(schema, refs), true)
     } else if its::has_any_of(schema) {
-        parsers::parse_any_of(schema, refs)
+        (parsers::parse_any_of(schema, refs), true)
     } else if its::has_all_of(schema) {
-        parsers::parse_all_of(schema, refs)
+        (parsers::parse_all_of(schema, refs), true)
     } else if its::is_simple_discriminated_one_of(schema) {
-        parsers::parse_simple_discriminated_one_of(schema, refs)
+        (
+            parsers::parse_simple_discriminated_one_of(schema, refs),
+            true,
+        )
     } else if its::has_one_of(schema) {
-        parsers::parse_one_of(schema, refs)
+        (parsers::parse_one_of(schema, refs), true)
     } else if its::has_not(schema) {
-        parsers::parse_not(schema, refs)
+        (parsers::parse_not(schema, refs), true)
     } else if its::has_enum(schema) {
-        parsers::parse_enum(schema)
+        (parsers::parse_enum(schema), true)
     } else if its::has_const(schema) {
-        parsers::parse_const(schema)
+        (parsers::parse_const(schema), true)
     } else if its::is_multiple_type(schema) {
-        parsers::parse_multiple_type(schema, refs)
+        (parsers::parse_multiple_type(schema, refs), false)
     } else if its::is_primitive(schema, "string") {
-        parsers::parse_string(schema)
+        (parsers::parse_string_with_refs(schema, refs), true)
     } else if its::is_primitive(schema, "number") || its::is_primitive(schema, "integer") {
-        parsers::parse_number(schema)
+        (parsers::parse_number(schema), true)
     } else if its::is_primitive(schema, "boolean") {
-        parsers::parse_boolean()
+        (parsers::parse_boolean(), true)
     } else if its::is_primitive(schema, "null") {
-        parsers::parse_null()
+        (parsers::parse_null(), true)
     } else if its::is_conditional(schema) {
-        parsers::parse_if_then_else(schema, refs)
+        (parsers::parse_if_then_else(schema, refs), false)
     } else {
-        parsers::parse_default()
+        (parsers::parse_default(), false)
+    };
+
+    if can_append_conditional && schema.get("type").is_some() && its::is_conditional(schema) {
+        parsers::append_if_then_else(parsed, schema, refs)
+    } else {
+        parsed
     }
 }
 
@@ -229,6 +238,30 @@ mod tests {
                         "if": { "type": "string" },
                         "then": { "type": "number" },
                         "else": { "type": "boolean" }
+                    }),
+                    &refs_v4()
+                ),
+                expected
+            );
+        }
+
+        #[test]
+        fn typed_schema_keeps_conditional_validation() {
+            let expected = r#"z.string().superRefine((value,ctx) => {
+  const result = z.string().regex(new RegExp("^a")).safeParse(value).success
+    ? z.string().min(2).safeParse(value)
+    : z.string().max(2).safeParse(value);
+  if (!result.success) {
+    result.error.issues.forEach((error) => ctx.addIssue(error))
+  }
+})"#;
+            assert_eq!(
+                parse_schema(
+                    &json!({
+                        "type": "string",
+                        "if": { "type": "string", "pattern": "^a" },
+                        "then": { "type": "string", "minLength": 2 },
+                        "else": { "type": "string", "maxLength": 2 }
                     }),
                     &refs_v4()
                 ),
